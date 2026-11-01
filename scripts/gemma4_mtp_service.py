@@ -93,13 +93,22 @@ class MTPChat:
                 "gemma4-12b does not support penalties, stops, logprobs, "
                 "logit bias, response_format or debug_config"
             )
-        if not request.messages or any(
-            m.role not in ("system", "user", "assistant") or not isinstance(m.content, str)
-            for m in request.messages
-        ):
+        if not request.messages:
             raise ValueError("gemma4-12b requires text system/user/assistant messages")
+        messages = []
+        for message in request.messages:
+            content = message.content
+            if isinstance(content, list):
+                if any(
+                    p.get("type") != "text" or not isinstance(p.get("text"), str) for p in content
+                ):
+                    raise ValueError("gemma4-12b supports text content blocks only")
+                content = "\n".join(p["text"] for p in content)
+            if message.role not in ("system", "user", "assistant") or not isinstance(content, str):
+                raise ValueError("gemma4-12b requires text system/user/assistant messages")
+            messages.append(dict(role=message.role, content=content))
         prompt = self.tokenizer.apply_chat_template(
-            [dict(role=m.role, content=m.content) for m in request.messages],
+            messages,
             tokenize=True,
             add_generation_prompt=True,
             enable_thinking=False,

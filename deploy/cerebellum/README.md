@@ -137,6 +137,28 @@ Tools are enabled: the launcher has no `--no-tools` flag and the model's
 `samplingParams` contains `temperature: 0, top_p: 1` without `tool_choice: none`.
 Start a new Pi process after changing its model configuration.
 
+`models.json` also registers `cerebellum/gemma4-12b` (1,024 context, 128 output
+tokens), with per-model compaction reserve/retention of 256/256. Reopen `/model`
+to reload Pi's local model registry; it does not automatically discover the
+server's `/v1/models` entries. The Nemotron default is unchanged.
+
+The 12B prototype cannot accommodate an ordinary coding session's tools and
+workspace prompt. Use the minimal text-chat launcher on nowhere:
+
+```bash
+~/.pi/agent/bin/pi-gemma4
+```
+
+It selects 12B with a short system prompt and disables tools, MCP, extensions,
+skills and workspace context-file loading. Start a fresh conversation rather
+than transferring a coding transcript into its 1K context. The server accepts
+both plain text strings and OpenAI text content blocks sent by Pi.
+
+This model sets `samplingParams.max_tokens: 128` explicitly: Pi 1.4.0's generic
+4,096-token context safety margin otherwise clamps a 1K model to one output
+token. The server still enforces the actual 1K prompt/output/verification budget.
+The minimal launcher was verified through Pi itself with a `391` response.
+
 `pi-clm` also remains installed with `extensions: []`. Its default guard uses
 `window − 4096 − reserve` (2048 input tokens on this model), so it withheld even
 a one-line read result and then withheld the model's attempt to retrieve it.
