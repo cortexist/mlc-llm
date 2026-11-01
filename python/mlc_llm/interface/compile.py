@@ -128,6 +128,7 @@ def _compile(args: CompileArgs, model_config: ConfigBase):
         return {
             "total_seq_len": model_config.context_window_size,
             "seq_len": model_config.prefill_chunk_size,
+            "verify_len": 3,  # MTP: frontier plus at most two draft tokens.
             "batch_size": getattr(model_config, "max_batch_size", 1),
         }
 

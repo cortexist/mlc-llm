@@ -78,6 +78,12 @@ history are in [the experiment record](docs/deploy/xavier_dflash.md).
 
 ## Additional model: Gemma4 Unified 12B
 
+An experimental port of the official `Gemma4UnifiedAssistantForCausalLM` also
+supports native MTP trials with this target. See the
+[MTP implementation, validation and build instructions](docs/deploy/xavier_gemma4_mtp.md).
+It currently uses a greedy direct-VM controller with a 1K context limit;
+the HTTP service continues to run Nemotron.
+
 The fork also supports text generation from
 `gemma-4-12B-IT-QAT-Q4_0-unquantized-heretic`, converted from BF16 to MLC
 `q4f16_1` (6.70 GB of tensors). These are **plain-decoding** results on the
@@ -108,6 +114,8 @@ compatibility investigation; these plain rates do not include speculative decodi
   the newer NVRTC bindings, and a fix for exporting shared module graphs.
 - **Gemma4 support:** E4B/Nemotron with two KV heads, plus a text-only Unified
   12B port with mixed local/global KV head counts and global K=V projections.
+- **Native Unified MTP prototype:** official QAT assistant conversion, shared-KV
+  draft steps, greedy target verification and a reproducible direct-VM trial.
 - **Faster projections:** one-token GEMV specialization; FP16 dequantization +
   cuBLAS for large prefill; native DP4A/Q8-activation kernels for 1–4 rows.
 - **DFlash execution:** target feature extraction, GPU greedy selection, cached

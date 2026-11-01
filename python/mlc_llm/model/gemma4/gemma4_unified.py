@@ -116,6 +116,7 @@ class UnifiedAttention(Gemma4TextAttention):
             op.reshape(raw_value, (batch, seq_len, self.num_kv_heads, self.head_dim))
         )
         query, key = self.rotary_emb(query, key, positions)
+        shared_kv = (key, value)
         if self.num_kv_heads != self.cache_heads:
             key = op.broadcast_to(key, (batch, seq_len, self.cache_heads, self.head_dim))
             value = op.broadcast_to(value, (batch, seq_len, self.cache_heads, self.head_dim))
@@ -134,7 +135,7 @@ class UnifiedAttention(Gemma4TextAttention):
             _slice_head_dim(output, self.head_dim),
             (batch, seq_len, self.num_q_heads * self.head_dim),
         )
-        return self.o_proj(output), None
+        return self.o_proj(output), shared_kv
 
 
 class UnifiedDecoderLayer(Gemma4TextDecoderLayer):
@@ -151,14 +152,14 @@ class UnifiedDecoderLayer(Gemma4TextDecoderLayer):
         self.layer_scalar = nn.Parameter((1,))
 
     def forward(self, hidden_states, per_layer_input, paged_kv_cache, positions, shared_kv):
-        attention, _ = self.self_attn(
+        attention, current_kv = self.self_attn(
             self.input_layernorm(hidden_states), paged_kv_cache, positions, None
         )
         hidden_states = hidden_states + self.post_attention_layernorm(attention)
         hidden_states = hidden_states + self.post_feedforward_layernorm(
             self.mlp(self.pre_feedforward_layernorm(hidden_states))
         )
-        return hidden_states * self.layer_scalar, None
+        return hidden_states * self.layer_scalar, current_kv
 
 
 class UnifiedTextModel(Gemma4TextModel):

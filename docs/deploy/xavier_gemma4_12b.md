@@ -1,5 +1,10 @@
 # Gemma4 Unified 12B on Xavier
 
+The official QAT assistant now has a separate
+[native MTP prototype and short measured trial](xavier_gemma4_mtp.md), using
+`Gemma4UnifiedAssistantForCausalLM`. It accepts proposals with this target;
+the DFlash experiment below remains a separate, unsuccessful pairing.
+
 The additional `gemma4_unified` model entry supports text generation from
 `~/Models/gemma-4-12B-IT-QAT-Q4_0-unquantized-heretic` on cerebellum. Its source
 contains 11,907,350,320 text parameters in BF16; the small audio and vision

@@ -21,7 +21,7 @@ from .eagle import eagle_loader, eagle_model
 from .gemma import gemma_loader, gemma_model
 from .gemma2 import gemma2_loader, gemma2_model
 from .gemma3 import gemma3_loader, gemma3_model, gemma3v_loader, gemma3v_model
-from .gemma4 import gemma4_loader, gemma4_model, gemma4_unified
+from .gemma4 import gemma4_loader, gemma4_model, gemma4_mtp, gemma4_unified
 from .gpt2 import gpt2_loader, gpt2_model
 from .gpt_bigcode import gpt_bigcode_loader, gpt_bigcode_model
 from .gpt_j import gpt_j_loader, gpt_j_model
@@ -277,6 +277,32 @@ MODELS: Dict[str, Model] = {  # noqa: UP006
             supports_ft_quant=False,
         ),
         artifact=gemma4_model.GEMMA4_ARTIFACT,
+        supports_flashinfer=False,
+    ),
+    "gemma4_unified_assistant": Model(
+        name="gemma4_unified_assistant",
+        model=gemma4_mtp.Gemma4UnifiedAssistantForCausalLM,
+        config=gemma4_mtp.Gemma4UnifiedAssistantConfig,
+        source={
+            "huggingface-torch": gemma4_mtp.assistant_huggingface,
+            "huggingface-safetensor": gemma4_mtp.assistant_huggingface,
+        },
+        quantize=make_quantization_functions(
+            gemma4_mtp.Gemma4UnifiedAssistantForCausalLM, supports_ft_quant=False
+        ),
+        supports_flashinfer=False,
+    ),
+    "gemma4_unified_mtp_target": Model(
+        name="gemma4_unified_mtp_target",
+        model=gemma4_mtp.Gemma4UnifiedMTPTarget,
+        config=gemma4_unified.Gemma4UnifiedConfig,
+        source={
+            "huggingface-torch": gemma4_unified.huggingface,
+            "huggingface-safetensor": gemma4_unified.huggingface,
+        },
+        quantize=make_quantization_functions(
+            gemma4_mtp.Gemma4UnifiedMTPTarget, supports_ft_quant=False
+        ),
         supports_flashinfer=False,
     ),
     "gemma3_v": Model(
