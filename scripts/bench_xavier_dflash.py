@@ -14,9 +14,12 @@ from mlc_llm.serve.config import EngineConfig
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--draft-tokens", type=int, default=2, help="Zero disables speculation")
-parser.add_argument("--target-lib", default="dist/libs/target-dflash-sm72.so")
-parser.add_argument("--draft-lib", default="dist/libs/draft-cached-fp32res-sm72.so")
+parser.add_argument("--target-lib", default="dist/libs/target-dflash-graph-b3-sm72.so")
+parser.add_argument("--draft-lib", default="dist/libs/draft-cached-tc-sm72.so")
 parser.add_argument("--tokens", type=int, default=128)
+parser.add_argument(
+    "--limits", help="Comma-separated token limits for boundary checks in one engine"
+)
 parser.add_argument("--repeats", type=int, default=2)
 parser.add_argument("--warmups", type=int, default=1)
 parser.add_argument("--trace", action="store_true", help="CUPTI diagnostic, not a timing run")
@@ -72,7 +75,8 @@ engine = MLCEngine(
 )
 
 
-def run(prompt, label=None):
+def run(prompt, label=None, token_limit=None):
+    token_limit = args.tokens if token_limit is None else token_limit
     before = engine.metrics().metrics
     if trace and label:
         assert trace.trace_start() == 0
@@ -83,7 +87,7 @@ def run(prompt, label=None):
     for chunk in engine.chat.completions.create(
         messages=[{"role": "user", "content": prompt}],
         temperature=0,
-        max_tokens=args.tokens,
+        max_tokens=token_limit,
         stream=True,
         stream_options={"include_usage": True},
         extra_body={"debug_config": {"ignore_eos": not args.allow_eos}},
@@ -105,10 +109,10 @@ def run(prompt, label=None):
     if trace and label:
         assert trace.trace_stop(str(out.with_name(label + ".decode.csv")).encode()) == 0
     assert usage is not None
-    assert usage["completion_tokens"] <= args.tokens, usage
+    assert usage["completion_tokens"] <= token_limit, usage
     if not args.allow_eos:
-        assert usage["completion_tokens"] == args.tokens, usage
-        assert usage["extra"]["decode_tokens"] == args.tokens - 1, usage
+        assert usage["completion_tokens"] == token_limit, usage
+        assert usage["extra"]["decode_tokens"] == token_limit - 1, usage
     return dict(
         text="".join(chunks),
         usage=usage,
@@ -122,24 +126,28 @@ def run(prompt, label=None):
 
 try:
     for case in args.cases.split(","):
-        for _ in range(args.warmups):
-            run(prompts[case])
-        for repeat in range(args.repeats):
-            result = dict(
-                case=case, repeat=repeat, **run(prompts[case], f"{out.stem}.{case}.{repeat}")
-            )
-            results["runs"].append(result)
-            out.write_text(json.dumps(results, indent=2) + "\n")
-            print(
-                json.dumps(
-                    {
-                        k: v
-                        for k, v in result.items()
-                        if k not in ["metrics_before", "metrics_after"]
-                    }
-                ),
-                flush=True,
-            )
+        for limit in map(int, args.limits.split(",")) if args.limits else [args.tokens]:
+            for _ in range(args.warmups):
+                run(prompts[case], token_limit=limit)
+            for repeat in range(args.repeats):
+                result = dict(
+                    case=case,
+                    repeat=repeat,
+                    token_limit=limit,
+                    **run(prompts[case], f"{out.stem}.{case}.{limit}.{repeat}", limit),
+                )
+                results["runs"].append(result)
+                out.write_text(json.dumps(results, indent=2) + "\n")
+                print(
+                    json.dumps(
+                        {
+                            k: v
+                            for k, v in result.items()
+                            if k not in ["metrics_before", "metrics_after"]
+                        }
+                    ),
+                    flush=True,
+                )
 finally:
     if trace:
         trace.trace_finish()
