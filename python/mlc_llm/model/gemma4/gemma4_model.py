@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 from typing import Dict, Tuple  # noqa: UP035
 
 from tvm import te
@@ -25,6 +26,8 @@ from .gemma4_audio import (
 from .gemma4_config import Gemma4Config, Gemma4TextConfig
 
 _PHYSICAL_HEAD_DIM = 512
+# Local patch (mlc-jp5): leave the audio adapter out of the compiled library.
+_TEXT_ONLY = os.environ.get("MLC_GEMMA4_TEXT_ONLY") == "1"
 
 
 class Gemma4TextMLP(nn.Module):
@@ -553,10 +556,20 @@ class Gemma4ForConditionalGeneration(nn.Module):
                 "$": none,
             },
         }
+        if _TEXT_ONLY:
+            mod_spec.pop("audio_embed")
         return nn.spec.ModuleSpec.from_raw(mod_spec, self)
 
 
 def gemma4_artifact_tasks(config: Gemma4Config):
+    if _TEXT_ONLY:
+        return {
+            "chat.completions": {
+                "executor": "generation",
+                "inputs": {"text": {"processor": "tokenizer"}},
+                "output": "text",
+            }
+        }
     return {
         "chat.completions": {
             "executor": "generation",
@@ -594,7 +607,7 @@ def gemma4_artifact_programs(_config: Gemma4Config):
                 "decode_tokens": "decode_tokens",
                 "create_kv_cache": "create_tir_paged_kv_cache",
             },
-            "adapters": {"audio": "audio_embed"},
+            "adapters": {} if _TEXT_ONLY else {"audio": "audio_embed"},
         }
     }
 

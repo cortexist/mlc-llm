@@ -22,6 +22,9 @@ class LowBatchGemvSpecialize:
             if isinstance(func, tirx.Function):
                 low_batch_range = [2, 8]
                 buckets = [2, 4]
+                if __import__("os").environ.get("MLC_JP5_SINGLE_TOKEN") == "1":
+                    low_batch_range = [1, 2, 8]
+                    buckets = [1, 2, 4]
                 low_batch_funcs = []
                 for bucket in buckets:
                     low_batch_mod = IRModule({})

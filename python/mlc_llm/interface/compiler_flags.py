@@ -106,6 +106,9 @@ class OptimizationFlags:
                 return False
             if not (
                 quantization.name in ["q0f16", "q0bf16", "q0f32"]
+                or (quantization.name == "q4f16_1"
+                    and target.kind.name == "cuda"
+                    and __import__("os").environ.get("MLC_JP5_Q4_CUBLAS") == "1")
                 or "e4m3" in quantization.name
                 or "e5m2" in quantization.name
             ):

@@ -39,6 +39,8 @@ class BLASDispatch:
         ]
         # exclude single batch decode
         model_names = [name for name in model_names if "batch" in name or "decode" not in name]
+        if __import__("os").environ.get("MLC_JP5_Q4_CUBLAS") == "1":
+            model_names = [name for name in model_names if "prefill" in name]
         mod = tvm_tirx.transform.Sequential(
             [
                 relax.transform.FuseOpsByPattern(

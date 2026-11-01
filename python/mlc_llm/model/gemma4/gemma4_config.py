@@ -110,8 +110,9 @@ class Gemma4TextConfig(ConfigBase):
             raise ValueError("The first Gemma 4 target is the dense E2B architecture")
         if not self.tie_word_embeddings:
             raise ValueError("Untied Gemma 4 language-model heads are not supported")
-        if self.num_key_value_heads != 1 or self.num_attention_heads != 8:
-            raise ValueError("The first Gemma 4 target requires 8 query heads and one KV head")
+        # Local patch (mlc-jp5): E4B uses 2 KV heads; any GQA grouping works with the model code.
+        if self.num_attention_heads != 8 or self.num_attention_heads % self.num_key_value_heads:
+            raise ValueError("Gemma 4 requires 8 query heads divisible by the KV head count")
         if not 0 < self.num_kv_shared_layers < self.num_hidden_layers:
             raise ValueError("The first Gemma 4 target requires shared KV layers")
         if self.head_dim != 256 or self.global_head_dim != 512:
