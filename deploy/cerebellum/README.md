@@ -61,14 +61,21 @@ can otherwise terminate its background worker.
 `~/.pi/agent/models.json` registers `cerebellum/nemotron`, reads the API key
 from the private credential file, and declares the 8192-token context and
 1024-token output limit. `~/.pi/agent/bin/pi-cerebellum` selects it and loads
-the local CA through `NODE_EXTRA_CA_CERTS` before Node starts:
+the system trust store through `NODE_USE_SYSTEM_CA=1` before Node starts:
 
 ```bash
 pi-cerebellum
 # Or select the provider directly:
-NODE_EXTRA_CA_CERTS="$HOME/LocalAuthority/local-ca.crt" \
+NODE_USE_SYSTEM_CA=1 \
   pi --provider cerebellum --model nemotron --thinking off --no-tools
 ```
+
+On nowhere, the root is installed at
+`/etc/ca-certificates/trust-source/anchors/local-ca.crt` and extracted by
+`sudo update-ca-trust`. `/etc/environment` and
+`/etc/profile.d/local-node-system-ca.sh` enable Node system-store trust for new
+login sessions. Existing shells can run `export NODE_USE_SYSTEM_CA=1`. Some
+applications maintain independent trust stores and need their own configuration.
 
 Pi uses `openai-completions`, bearer authentication, `max_tokens`, system-role
 messages and greedy sampling. Its per-model compaction settings reserve 1536
