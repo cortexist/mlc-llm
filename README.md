@@ -76,11 +76,33 @@ past EOS measures throughput rather than natural answer quality. Raw summaries
 are in [docs/benchmarks/xavier](docs/benchmarks/xavier); detailed validation and
 history are in [the experiment record](docs/deploy/xavier_dflash.md).
 
+## Additional model: Gemma4 Unified 12B
+
+The fork also supports text generation from
+`gemma-4-12B-IT-QAT-Q4_0-unquantized-heretic`, converted from BF16 to MLC
+`q4f16_1` (6.70 GB of tensors). These are **plain-decoding** results on the
+same Xavier, with a 4K context, chunks of 512, one warmup and two measured
+128-token runs per prompt:
+
+| Prompt tokens | Prefill tok/s | Decode tok/s | Complete request |
+|---|---:|---:|---:|
+| 161 | 90.82 | 11.72 | 12.616 s |
+| 448 | 109.65 | 10.59 | 16.082 s |
+| 1,768 | 50.44 | 8.73 | 49.607 s |
+
+This first port uses the fast projection kernels and generic attention;
+the Nemotron-specific attention optimizations do not apply to its different
+head layout. See [the 12B experiment](docs/deploy/xavier_gemma4_12b.md) for
+conversion/build instructions, validation and native-MTP compatibility, and
+[the saved summary](docs/benchmarks/xavier/gemma4-12b-heretic-summary.json)
+for the measured means.
+
 ## Improvements in this fork
 
 - **CUDA 11.4 support:** pinned TVM/TIRx compatibility patches, nvcc instead of
   the newer NVRTC bindings, and a fix for exporting shared module graphs.
-- **Gemma4 E4B/Nemotron support:** two KV heads and text-only compilation on Xavier.
+- **Gemma4 support:** E4B/Nemotron with two KV heads, plus a text-only Unified
+  12B port with mixed local/global KV head counts and global K=V projections.
 - **Faster projections:** one-token GEMV specialization; FP16 dequantization +
   cuBLAS for large prefill; native DP4A/Q8-activation kernels for 1–4 rows.
 - **DFlash execution:** target feature extraction, GPU greedy selection, cached

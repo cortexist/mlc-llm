@@ -1,0 +1,39 @@
+{
+  "date": "2026-11-01",
+  "device": "cerebellum, Jetson AGX Xavier 32 GB",
+  "model": "gemma-4-12B-IT-QAT-Q4_0-unquantized-heretic",
+  "quantization": "q4f16_1",
+  "context_size": 4096,
+  "prefill_chunk_size": 512,
+  "output_tokens": 128,
+  "warmups_per_case": 1,
+  "measured_repeats_per_case": 2,
+  "converted_tensor_bytes": 6698991200,
+  "source_text_parameters": 11907350320,
+  "plain": {
+    "chat": {
+      "prompt_tokens": 161,
+      "prefill_tok_s": 90.81706191022982,
+      "decode_tok_s": 11.715439042698847,
+      "ttft_s": 1.7767396260023816,
+      "wall_s": 12.616425202500977,
+      "repeat_output_identical": true
+    },
+    "448": {
+      "prompt_tokens": 448,
+      "prefill_tok_s": 109.64722204339702,
+      "decode_tok_s": 10.590723225156399,
+      "ttft_s": 4.090709469999638,
+      "wall_s": 16.081590296000286,
+      "repeat_output_identical": true
+    },
+    "1768": {
+      "prompt_tokens": 1768,
+      "prefill_tok_s": 50.43688863290201,
+      "decode_tok_s": 8.732348061583616,
+      "ttft_s": 35.062767205001364,
+      "wall_s": 49.606779015999564,
+      "repeat_output_identical": true
+    }
+  }
+}

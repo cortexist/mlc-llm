@@ -16,7 +16,10 @@ from mlc_llm.serve.config import EngineConfig
 parser = argparse.ArgumentParser()
 parser.add_argument("--draft-tokens", type=int, default=2, help="Zero disables speculation")
 parser.add_argument("--target-lib", default="dist/libs/target-dflash-graph-b3-sm72.so")
+parser.add_argument("--target", default="dist/target", help="Converted model directory")
+parser.add_argument("--context-size", type=int, default=8192)
 parser.add_argument("--draft-lib", default="dist/libs/draft-cached-tc-sm72.so")
+parser.add_argument("--draft", default="dist/draft", help="Converted DFlash draft directory")
 parser.add_argument("--tokens", type=int, default=128)
 parser.add_argument(
     "--limits", help="Comma-separated token limits for boundary checks in one engine"
@@ -46,11 +49,11 @@ config = EngineConfig(
     prefix_cache_mode="disable",
     prefill_chunk_size=512,
     max_num_sequence=1,
-    max_single_sequence_length=8192,
-    max_total_sequence_length=8192,
+    max_single_sequence_length=args.context_size,
+    max_total_sequence_length=args.context_size,
     speculative_mode="dflash" if args.draft_tokens else "disable",
     spec_draft_length=args.draft_tokens + 1 if args.draft_tokens else 0,
-    additional_models=[(str(root / "dist/draft"), str(root / args.draft_lib))]
+    additional_models=[(str(root / args.draft), str(root / args.draft_lib))]
     if args.draft_tokens
     else [],
 )
@@ -72,7 +75,7 @@ if args.prefill_variant != "baseline":
 
     prefill_receipt = install(args.prefill_variant)
 engine = MLCEngine(
-    str(root / "dist/target"),
+    str(root / args.target),
     model_lib=str(root / args.target_lib),
     device="cuda",
     mode="interactive",
