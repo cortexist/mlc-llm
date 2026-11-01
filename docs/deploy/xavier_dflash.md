@@ -188,6 +188,109 @@ MLC_XAVIER_ATTN_OFF=1 python scripts/bench_xavier_dflash.py --draft-tokens 2 \
 python scripts/bench_xavier_llama.py --output logs/llama-control.json
 ```
 
+## Prefill experiments (2026-11-01)
+
+The prefill audit is now tested with isolated attention callbacks. The model
+library, q4f16_1 weights, 512-wide cache storage, draft model, and decode/verify
+kernels are identical in every arm. `--prefill-variant` replaces only attention
+calls with more than four total query rows, during cache creation. The factory
+hook is process-local; per-layer execution stays in C++/CUDA, without Python
+callbacks. The benchmark default remains `baseline`.
+
+Fresh MAXN/fixed-clock runs use one warmup and two measured requests per case,
+128 forced output tokens, context 8192, chunk 512, two DFlash proposals, one
+sequence and disabled prefix caching. Compilation and inference are serialized.
+
+| Prefill variant | 161 tokens | 448 tokens | 1768 tokens | Long TTFT | Long request wall |
+|---|---:|---:|---:|---:|---:|
+| Current baseline | 218.91 tok/s | 271.75 tok/s | 143.94 tok/s | 12.292 s | 16.354 s |
+| Skip fully masked tiles | 235.07 | 345.13 | 201.56 | 8.781 s | 12.847 s |
+| Bounds + 256-wide local paged arithmetic | 233.16 | 340.26 | 250.50 | 7.068 s | 11.122 s |
+| Above + WMMA for ragged/current-chunk attention | **240.79** | **395.16** | **278.67** | **6.354 s** | **10.438 s** |
+
+The combined `hybrid` candidate improves long prefill **1.94x** and cuts long
+request wall time by 36%. Decode remains approximately 31 tok/s on that prompt.
+The same candidate improves medium prefill 1.45x. The small short/medium
+difference between `bounds` and `width` is not evidence of a width benefit:
+those prompts fit in one chunk, without past paged K/V to accelerate.
+
+The prior fresh llama control reached 341.88 prefill tok/s and 10.43 seconds
+for its long request. Thus the new MLC candidate nearly matches that complete
+request time, while llama still has faster prefill. That control is from the
+previous experiment, uses a different quantization and counts 1774 rather
+than 1768 prompt tokens; it is not a new matched numerical comparison.
+
+The three component candidates passed 24 cases each against the original TVM
+kernel and independently sampled FP32 attention. Coverage includes shuffled
+pages, nonzero offsets/sinks, two sequences, partial tiles, causal/noncausal
+attention, scale changes, empty contexts and all-masked rows. Output and
+base-2 log-sum-exp are checked. The original finite mask sentinel creates
+spurious values for all-masked rows; the candidates require exact zero output
+and the empty-state LSE instead. Such a paged row contributes no meaningful
+mass when merged with valid current-chunk attention.
+
+Twelve additional unit-scale Q/K/V cases pass for all three candidates,
+including bit-identical three-query fallback checks: **108 candidate/case
+checks** in total. On valid rows, bounds/width outputs are bit-identical to
+TVM in these fixtures. WMMA's maximum observed absolute output difference is
+0.001953125 on unit-scale inputs. An elevated Compute Sanitizer memcheck of
+all 12 stress cases completes with **zero errors**. The initial unprivileged
+attempt could not initialize the Jetson debugger interface and is excluded
+from memory-safety conclusions. Disassembly confirms `HMMA.884` instructions
+in the native prototype. Instrumented timings are excluded from the tables.
+
+Representative component timings, in milliseconds:
+
+| Attention fixture | Original | Bounds | Bounds + local width | WMMA prototype |
+|---|---:|---:|---:|---:|
+| Current chunk, 512 Q / 512 KV | 24.01 | 12.97 | 12.97 | 7.35 |
+| Local paged, 512 Q / 512 KV | 51.13 | 24.61 | 6.35 | 6.14 |
+| Global paged, 232 Q / 1536 KV, causal | 57.65 | 53.55 | 53.52 | 60.64 |
+
+The prototype uses sm_72-compatible WMMA, FP16 Q/K/V and probabilities, and
+FP32 dot-product/softmax/output accumulation. It is useful on ragged attention
+but does not consistently beat the simpler optimized TIR paged kernel. The
+combined candidate therefore selects WMMA only for ragged attention. Ragged
+attention retains width 512: its callback does not carry the layer type needed
+to safely choose 256. Local paged attention knows its type and uses width 256,
+while preserving padded storage and zeroing the unused output half.
+
+`bounds` and `width` reproduce all six baseline output strings in this sweep.
+`hybrid` reproduces the short and medium outputs but changes the long forced
+continuation. WMMA changes floating-point arithmetic; these checks do not
+establish broad model-quality equivalence. `width` is the conservative measured
+alternative at 1.74x long-prefill speed. Tail pruning, dequantization caching,
+and larger prefill chunks have not been implemented in these experiments.
+
+Natural-stop checks with the final combined library return `391` for arithmetic,
+the requested three summary bullets plus two additional risks (218 completion
+tokens), and `Done` for the 1768-token input. These complete below their output
+limits. They are functional checks, not a broad accuracy evaluation.
+
+Reproduce with the existing prepared runtime and weights:
+
+```bash
+source ~/Workspaces/mlc-jp5/env.sh
+cd ~/Workspaces/mlc-dflash-work
+export PYTHONPATH="$PWD/python" MLC_LIBRARY_PATH="$PWD/build"
+export TVM_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2
+taskset -c 0,1 python scripts/build_xavier_prefill.py
+python tests/python/op/test_xavier_prefill.py --output logs/test-prefill-experiments.json
+bash scripts/run_xavier_prefill_experiments.sh
+# Select a candidate for an individual request/benchmark:
+python scripts/bench_xavier_dflash.py --prefill-variant hybrid \
+  --target-lib dist/libs/target-dflash-dp4a-attn-sm72.so --draft-tokens 2 \
+  --output logs/prefill-hybrid.json
+```
+
+Evidence: `mlc-jp5/logs/prefill-experiments-20261101/`. The TIR builder derives
+isolated factories from the pinned TVM source and exports separate libraries;
+it does not modify the installed TVM files or recompile the model. The user
+requested that the separate board stability investigation remain deferred.
+All four timed arms complete successfully. The timing sweep reaches 63.5 C
+GPU and retains at least 20,673 MiB available system memory; it does not
+establish long-term board stability.
+
 ## Prior controlled results, before the native kernels
 
 **Before the native kernels, the completed DFlash port was slower than optimized plain MLC.**

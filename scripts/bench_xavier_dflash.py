@@ -26,6 +26,11 @@ parser.add_argument("--trace", action="store_true", help="CUPTI diagnostic, not 
 parser.add_argument("--cases", default="chat,448,1768")
 parser.add_argument("--allow-eos", action="store_true")
 parser.add_argument("--output", required=True)
+parser.add_argument(
+    "--prefill-variant",
+    choices=["baseline", "bounds", "width", "wmma", "hybrid"],
+    default="baseline",
+)
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 assert Path(mlc_llm.__file__).resolve().is_relative_to(root / "python")
@@ -66,6 +71,11 @@ if args.trace:
     trace.trace_finish.restype = None
     assert trace.trace_start() == 0
 print("Loading experimental runtime:", _LIB_PATH, flush=True)
+prefill_receipt = None
+if args.prefill_variant != "baseline":
+    from mlc_llm.op.xavier_prefill import install
+
+    prefill_receipt = install(args.prefill_variant)
 engine = MLCEngine(
     str(root / "dist/target"),
     model_lib=str(root / args.target_lib),
@@ -73,6 +83,8 @@ engine = MLCEngine(
     mode="interactive",
     engine_config=config,
 )
+if prefill_receipt is not None:
+    assert prefill_receipt["target_caches"] == 1, prefill_receipt
 
 
 def run(prompt, label=None, token_limit=None):
