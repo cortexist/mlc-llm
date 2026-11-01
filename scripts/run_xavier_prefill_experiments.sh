@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-source "$HOME/Workspaces/mlc-jp5/env.sh"
+source "$(dirname "$0")/xavier/env.sh"
 cd "$(dirname "$0")/.."
 export PYTHONPATH="$PWD/python" MLC_LIBRARY_PATH="$PWD/build" OPENBLAS_NUM_THREADS=1
 for variant in baseline bounds width hybrid; do

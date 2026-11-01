@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run under run_monitored.py; this deliberately builds and tests sequentially.
 set -euo pipefail
-source "$HOME/Workspaces/mlc-jp5/env.sh"
+source "$(dirname "$0")/xavier/env.sh"
 cd "$(dirname "$0")/.."
 export PYTHONPATH="$PWD/python"
 export MLC_LIBRARY_PATH="$PWD/build"

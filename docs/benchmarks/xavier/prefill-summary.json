@@ -1,0 +1,166 @@
+{
+  "baseline": {
+    "chat": {
+      "prompt_tokens": 161,
+      "prefill_tok_s": 218.90795322237517,
+      "decode_tok_s": 31.703380340706396,
+      "ttft_s": 0.7388055649998932,
+      "wall_s": 4.7451968135000016,
+      "identical_output_to_baseline": [
+        true,
+        true
+      ],
+      "repeat_output_identical": true,
+      "prefill_speedup": 1.0
+    },
+    "448": {
+      "prompt_tokens": 448,
+      "prefill_tok_s": 271.7472104408512,
+      "decode_tok_s": 33.65351146984264,
+      "ttft_s": 1.6539082434999273,
+      "wall_s": 5.427217885499999,
+      "identical_output_to_baseline": [
+        true,
+        true
+      ],
+      "repeat_output_identical": true,
+      "prefill_speedup": 1.0
+    },
+    "1768": {
+      "prompt_tokens": 1768,
+      "prefill_tok_s": 143.94239225051996,
+      "decode_tok_s": 31.273674640060598,
+      "ttft_s": 12.29246847950003,
+      "wall_s": 16.35377682400008,
+      "identical_output_to_baseline": [
+        true,
+        true
+      ],
+      "repeat_output_identical": true,
+      "prefill_speedup": 1.0
+    }
+  },
+  "bounds": {
+    "chat": {
+      "prompt_tokens": 161,
+      "prefill_tok_s": 235.06913663014174,
+      "decode_tok_s": 31.687340722864434,
+      "ttft_s": 0.6879784155000834,
+      "wall_s": 4.696128675000068,
+      "identical_output_to_baseline": [
+        true,
+        true
+      ],
+      "repeat_output_identical": true,
+      "prefill_speedup": 1.073826387620323
+    },
+    "448": {
+      "prompt_tokens": 448,
+      "prefill_tok_s": 345.1295785725498,
+      "decode_tok_s": 33.624960188207424,
+      "ttft_s": 1.3030541339999218,
+      "wall_s": 5.079431615999965,
+      "identical_output_to_baseline": [
+        true,
+        true
+      ],
+      "repeat_output_identical": true,
+      "prefill_speedup": 1.2700390852684433
+    },
+    "1768": {
+      "prompt_tokens": 1768,
+      "prefill_tok_s": 201.5604588186072,
+      "decode_tok_s": 31.235243879746243,
+      "ttft_s": 8.781053150000048,
+      "wall_s": 12.847220878500025,
+      "identical_output_to_baseline": [
+        true,
+        true
+      ],
+      "repeat_output_identical": true,
+      "prefill_speedup": 1.4002855980593105
+    }
+  },
+  "width": {
+    "chat": {
+      "prompt_tokens": 161,
+      "prefill_tok_s": 233.15963938508128,
+      "decode_tok_s": 31.841571822969115,
+      "ttft_s": 0.693659023500004,
+      "wall_s": 4.682289772000104,
+      "identical_output_to_baseline": [
+        true,
+        true
+      ],
+      "repeat_output_identical": true,
+      "prefill_speedup": 1.0651035558686563
+    },
+    "448": {
+      "prompt_tokens": 448,
+      "prefill_tok_s": 340.2581305256741,
+      "decode_tok_s": 33.603928095427875,
+      "ttft_s": 1.3214997930000436,
+      "wall_s": 5.100388770000109,
+      "identical_output_to_baseline": [
+        true,
+        true
+      ],
+      "repeat_output_identical": true,
+      "prefill_speedup": 1.2521126894869639
+    },
+    "1768": {
+      "prompt_tokens": 1768,
+      "prefill_tok_s": 250.49691691461408,
+      "decode_tok_s": 31.32882576841636,
+      "ttft_s": 7.067732367499957,
+      "wall_s": 11.121889194000005,
+      "identical_output_to_baseline": [
+        true,
+        true
+      ],
+      "repeat_output_identical": true,
+      "prefill_speedup": 1.7402581199195626
+    }
+  },
+  "hybrid": {
+    "chat": {
+      "prompt_tokens": 161,
+      "prefill_tok_s": 240.79433951511584,
+      "decode_tok_s": 31.680429094081262,
+      "ttft_s": 0.671703695500014,
+      "wall_s": 4.680663698499984,
+      "identical_output_to_baseline": [
+        true,
+        true
+      ],
+      "repeat_output_identical": true,
+      "prefill_speedup": 1.09997985897985
+    },
+    "448": {
+      "prompt_tokens": 448,
+      "prefill_tok_s": 395.1620800485663,
+      "decode_tok_s": 34.15820108952317,
+      "ttft_s": 1.1385682650000035,
+      "wall_s": 4.855905645500002,
+      "identical_output_to_baseline": [
+        true,
+        true
+      ],
+      "repeat_output_identical": true,
+      "prefill_speedup": 1.4541532161728583
+    },
+    "1768": {
+      "prompt_tokens": 1768,
+      "prefill_tok_s": 278.66510368013957,
+      "decode_tok_s": 31.10485888798423,
+      "ttft_s": 6.354292500999918,
+      "wall_s": 10.437520206499926,
+      "identical_output_to_baseline": [
+        false,
+        false
+      ],
+      "repeat_output_identical": true,
+      "prefill_speedup": 1.9359488148227086
+    }
+  }
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Requires the working mlc-jp5 toolchain and model files already present on brain1.
+# Requires the compiler stack and model inputs described in README.md.
 set -euo pipefail
-source "$HOME/Workspaces/mlc-jp5/env.sh"
+source "$(dirname "$0")/xavier/env.sh"
 DFLASH_SRC=$(cd "$(dirname "$0")/.." && pwd)
 cd "$DFLASH_SRC"
 export PYTHONPATH="$DFLASH_SRC/python"
@@ -11,16 +11,9 @@ export MLC_DFLASH_CUDA_GRAPH=1
 export TVM_NUM_THREADS=2
 export OMP_NUM_THREADS=2
 mkdir -p logs dist/libs
-# Reuse brain1's pinned, CUDA-11.4-compatible dependencies. Replace only empty
-# submodule placeholders; an existing populated checkout is never removed.
-mkdir -p 3rdparty
-if [[ ! -L 3rdparty ]]; then
-  for dep in argparse tokenizers-cpp googletest tvm stb xgrammar; do
-    rmdir "3rdparty/$dep" 2>/dev/null || true
-    if [[ ! -e "3rdparty/$dep" ]]; then
-      ln -s "$HOME/Workspaces/mlc-llm/3rdparty/$dep" "3rdparty/$dep"
-    fi
-  done
+if [[ ! -f 3rdparty/tvm/CMakeLists.txt ]]; then
+  echo "Initialize dependencies with: git submodule update --init --recursive" >&2
+  exit 1
 fi
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DUSE_CUDA=ON -DUSE_CUBLAS=ON -DUSE_THRUST=OFF -DUSE_CUTLASS=OFF \

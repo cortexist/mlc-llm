@@ -1,11 +1,12 @@
-"""Controlled plain/DFlash comparisons using the existing brain1 prompt corpus."""
+"""Controlled plain/DFlash comparisons using the fixed Xavier prompt corpus."""
 
 import argparse
-import ast
 import ctypes
 import json
 import time
 from pathlib import Path
+
+from xavier_bench_prompts import DESIGN_NOTE, FILLER
 
 import mlc_llm
 from mlc_llm import MLCEngine
@@ -35,16 +36,10 @@ args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 assert Path(mlc_llm.__file__).resolve().is_relative_to(root / "python")
 assert Path(_LIB_PATH).resolve().is_relative_to(root / "build"), _LIB_PATH
-constants = {}
-corpus = root.parent / "mlc-jp5/mlc_bench.py"
-for node in ast.parse(corpus.read_text()).body:
-    if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
-        if node.targets[0].id in ("DESIGN_NOTE", "FILLER"):
-            constants[node.targets[0].id] = ast.literal_eval(node.value)
 prompts = {
-    "chat": constants["DESIGN_NOTE"],
-    "448": "Read this and reply with one word.\n" + constants["FILLER"] * 13,
-    "1768": "Read this and reply with one word.\n" + constants["FILLER"] * 53,
+    "chat": DESIGN_NOTE,
+    "448": "Read this and reply with one word.\n" + FILLER * 13,
+    "1768": "Read this and reply with one word.\n" + FILLER * 53,
     "short": "What is 17 multiplied by 23? Give only the number.",
 }
 config = EngineConfig(

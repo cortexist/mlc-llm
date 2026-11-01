@@ -1,0 +1,26 @@
+{
+  "source_revision": "cda7cca5ab461724686baf3b28245d27751a0b41",
+  "output_tokens": 128,
+  "warmups_per_case": 1,
+  "measured_repeats_per_case": 2,
+  "llama": {
+    "chat": {
+      "prompt_tokens": 168,
+      "prefill_tok_s": 189.9003470689567,
+      "decode_tok_s": 26.80314817085695,
+      "request_wall_s": 5.634862673500265
+    },
+    "448": {
+      "prompt_tokens": 454,
+      "prefill_tok_s": 316.46393066959797,
+      "decode_tok_s": 25.091338983857533,
+      "request_wall_s": 6.5105511015003685
+    },
+    "1768": {
+      "prompt_tokens": 1774,
+      "prefill_tok_s": 341.8797501755939,
+      "decode_tok_s": 24.374854456476193,
+      "request_wall_s": 10.426547282999763
+    }
+  }
+}

@@ -1,13 +1,14 @@
 """Compare llama.cpp targets and draft modes with fixed prompts and output limits."""
 
 import argparse
-import ast
 import json
 import subprocess
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+from xavier_bench_prompts import DESIGN_NOTE, FILLER
 
 p = argparse.ArgumentParser()
 p.add_argument("--output", required=True)
@@ -22,15 +23,10 @@ args = p.parse_args()
 if args.model and args.spec_type != "none" and not args.draft_model:
     p.error("A custom target requires --draft-model, or --spec-type none")
 workspace = Path(__file__).resolve().parents[2]
-constants = {}
-for node in ast.parse((workspace / "mlc-jp5/mlc_bench.py").read_text()).body:
-    if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
-        if node.targets[0].id in ("DESIGN_NOTE", "FILLER"):
-            constants[node.targets[0].id] = ast.literal_eval(node.value)
 prompts = {
-    "chat": constants["DESIGN_NOTE"],
-    "448": "Read this and reply with one word.\n" + constants["FILLER"] * 13,
-    "1768": "Read this and reply with one word.\n" + constants["FILLER"] * 53,
+    "chat": DESIGN_NOTE,
+    "448": "Read this and reply with one word.\n" + FILLER * 13,
+    "1768": "Read this and reply with one word.\n" + FILLER * 53,
 }
 models = workspace.parent / "Models/nemotron-3.5-Bolt-E4B-4GB"
 model = args.model or models / "Nemotron-3.5-Bolt-E4B-Q4_K_M.gguf"

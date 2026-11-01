@@ -1,0 +1,22 @@
+{
+  "upstream_revision": "44fd06d0",
+  "date": "2026-10-31",
+  "mode": "plain decoding, CUDA 11.4 compatibility fixes only",
+  "cases": {
+    "161": {
+      "prefill_tok_s": 108.28335855155464,
+      "decode_tok_s": 11.900281566826639,
+      "repeats": 2
+    },
+    "448": {
+      "prefill_tok_s": 115.47331088848999,
+      "decode_tok_s": 10.801846939047824,
+      "repeats": 2
+    },
+    "1768": {
+      "prefill_tok_s": 82.66392550288947,
+      "decode_tok_s": 10.058632603039356,
+      "repeats": 2
+    }
+  }
+}

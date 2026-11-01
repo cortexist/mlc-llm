@@ -1,5 +1,6 @@
-"""Prepare isolated MLC packages from brain1's existing target and F16 draft."""
+"""Prepare MLC packages from a converted Nemotron target and its F16 draft."""
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -9,20 +10,36 @@ from safetensors.numpy import save_file
 
 root = Path(__file__).resolve().parents[1]
 home = Path.home()
-sys.path.insert(0, str(home / "Workspaces/llama.cpp/gguf-py"))
-from gguf import GGUFReader
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--target",
+    type=Path,
+    default=root / "dist/nemotron-q4",
+)
+parser.add_argument(
+    "--draft",
+    type=Path,
+    default=home / "Models/nemotron-3.5-Bolt-E4B-4GB/Nemotron-3.5-Bolt-E4B-DFlash-F16.gguf",
+)
+parser.add_argument("--gguf-python", type=Path, default=home / "Workspaces/llama.cpp/gguf-py")
+args = parser.parse_args()
+sys.path.insert(0, str(args.gguf_python))
+from gguf import GGUFReader  # noqa: E402 - uses the selected gguf-py checkout
 
-original = home / "Workspaces/mlc-jp5/dist/nemotron-3.5-Bolt-E4B-q4f16_1-MLC"
+original = args.target.resolve()
 target = root / "dist/target"
 draft_hf = root / "dist/draft-hf"
 draft = root / "dist/draft"
 for directory in [target, draft_hf, draft, root / "dist/libs"]:
     directory.mkdir(parents=True, exist_ok=True)
 
-reader = GGUFReader(
-    str(home / "Models/nemotron-3.5-Bolt-E4B-4GB/Nemotron-3.5-Bolt-E4B-DFlash-F16.gguf")
-)
-meta = lambda key: reader.fields[key].contents()
+reader = GGUFReader(str(args.draft))
+
+
+def meta(key):
+    return reader.fields[key].contents()
+
+
 assert meta("general.architecture") == "dflash"
 layers = [int(i) - 1 for i in meta("dflash.target_layers")]
 assert layers == [5, 11, 17, 23, 35]

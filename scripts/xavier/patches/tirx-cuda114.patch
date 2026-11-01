@@ -1,0 +1,200 @@
+diff --git a/python/tvm_tirx/backend/cuda/backend_config.py b/python/tvm_tirx/backend/cuda/backend_config.py
+index abbd852e..1f8f5c4f 100644
+--- a/python/tvm_tirx/backend/cuda/backend_config.py
++++ b/python/tvm_tirx/backend/cuda/backend_config.py
+@@ -98,7 +98,7 @@ def validate_backend_config(config):
+ def default_backend_config():
+     """Return fresh CUDA defaults, preserving the existing compilation policy."""
+     return BackendConfig(
+-        compiler="nvrtc",
++        compiler="nvcc",  # local patch (mlc-jp5): NVRTC path needs cuda-bindings / CUDA 12+
+         nvcc=["--use_fast_math"],
+         nvrtc=["--use_fast_math"],
+         ptxas=["-v", "--warn-on-local-memory-usage", "--register-usage-level=10"],
+diff --git a/src/backend/cuda/launch/launch_attributes.h b/src/backend/cuda/launch/launch_attributes.h
+index ff0a54eb..96db0f87 100644
+--- a/src/backend/cuda/launch/launch_attributes.h
++++ b/src/backend/cuda/launch/launch_attributes.h
+@@ -23,6 +23,60 @@
+ #include <cuda.h>
+ #include <cuda_runtime.h>
+ 
++// ---- CUDA < 11.8 compatibility (JetPack 5 / CUDA 11.4; local patch, see ~/Workspaces/mlc-jp5) ----
++// Extended launches (cuLaunchKernelEx, launch attributes, thread-block clusters) appeared in CUDA 11.8.
++// Every launch attribute TVM encodes is gated on CUDA >= 12.0, so with an older toolkit the attribute
++// list is always empty and an extended launch is exactly a classic launch. Cluster requests fail loudly.
++#if defined(CUDA_VERSION) && CUDA_VERSION < 11080
++typedef struct CUlaunchAttribute_st {
++  int id;
++  union {
++    char pad[64];
++  } value;
++} CUlaunchAttribute;
++typedef struct CUlaunchConfig_st {
++  unsigned int gridDimX, gridDimY, gridDimZ;
++  unsigned int blockDimX, blockDimY, blockDimZ;
++  unsigned int sharedMemBytes;
++  CUstream hStream;
++  CUlaunchAttribute* attrs;
++  unsigned int numAttrs;
++} CUlaunchConfig;
++// Not a valid attribute on this toolkit: the driver rejects it, so cluster launches error out.
++#define CU_FUNC_ATTRIBUTE_NON_PORTABLE_CLUSTER_SIZE_ALLOWED CU_FUNC_ATTRIBUTE_MAX
++inline CUresult cuLaunchKernelEx(const CUlaunchConfig* config, CUfunction f, void** params,
++                                 void** extra) {
++  if (config->numAttrs != 0) return CUDA_ERROR_NOT_SUPPORTED;
++  return cuLaunchKernel(f, config->gridDimX, config->gridDimY, config->gridDimZ, config->blockDimX,
++                        config->blockDimY, config->blockDimZ, config->sharedMemBytes,
++                        config->hStream, params, extra);
++}
++#endif
++#if defined(CUDART_VERSION) && CUDART_VERSION < 11080
++typedef struct cudaLaunchAttribute_st {
++  int id;
++  union {
++    char pad[64];
++  } val;
++} cudaLaunchAttribute;
++typedef struct cudaLaunchConfig_st {
++  dim3 gridDim;
++  dim3 blockDim;
++  size_t dynamicSmemBytes;
++  cudaStream_t stream;
++  cudaLaunchAttribute* attrs;
++  unsigned int numAttrs;
++} cudaLaunchConfig_t;
++#define cudaFuncAttributeNonPortableClusterSizeAllowed cudaFuncAttributeMax
++inline cudaError_t cudaLaunchKernelExC(const cudaLaunchConfig_t* config, const void* func,
++                                       void** args) {
++  if (config->numAttrs != 0) return cudaErrorNotSupported;
++  return cudaLaunchKernel(func, config->gridDim, config->blockDim, args, config->dynamicSmemBytes,
++                          config->stream);
++}
++#endif
++// ---- end CUDA < 11.8 compatibility ----
++
+ #include "launch_fields.h"
+ namespace tvm_cuda_launch {
+ inline constexpr size_t kMaxAttributes = 19;
+diff --git a/src/backend/cuda/launch/launch_source.h b/src/backend/cuda/launch/launch_source.h
+index df5125f8..9737ad42 100644
+--- a/src/backend/cuda/launch/launch_source.h
++++ b/src/backend/cuda/launch/launch_source.h
+@@ -247,6 +247,60 @@ inline void NormalizeLegacyPresence(LaunchValues* values) {
+ #include <cuda.h>
+ #include <cuda_runtime.h>
+ 
++// ---- CUDA < 11.8 compatibility (JetPack 5 / CUDA 11.4; local patch, see ~/Workspaces/mlc-jp5) ----
++// Extended launches (cuLaunchKernelEx, launch attributes, thread-block clusters) appeared in CUDA 11.8.
++// Every launch attribute TVM encodes is gated on CUDA >= 12.0, so with an older toolkit the attribute
++// list is always empty and an extended launch is exactly a classic launch. Cluster requests fail loudly.
++#if defined(CUDA_VERSION) && CUDA_VERSION < 11080
++typedef struct CUlaunchAttribute_st {
++  int id;
++  union {
++    char pad[64];
++  } value;
++} CUlaunchAttribute;
++typedef struct CUlaunchConfig_st {
++  unsigned int gridDimX, gridDimY, gridDimZ;
++  unsigned int blockDimX, blockDimY, blockDimZ;
++  unsigned int sharedMemBytes;
++  CUstream hStream;
++  CUlaunchAttribute* attrs;
++  unsigned int numAttrs;
++} CUlaunchConfig;
++// Not a valid attribute on this toolkit: the driver rejects it, so cluster launches error out.
++#define CU_FUNC_ATTRIBUTE_NON_PORTABLE_CLUSTER_SIZE_ALLOWED CU_FUNC_ATTRIBUTE_MAX
++inline CUresult cuLaunchKernelEx(const CUlaunchConfig* config, CUfunction f, void** params,
++                                 void** extra) {
++  if (config->numAttrs != 0) return CUDA_ERROR_NOT_SUPPORTED;
++  return cuLaunchKernel(f, config->gridDimX, config->gridDimY, config->gridDimZ, config->blockDimX,
++                        config->blockDimY, config->blockDimZ, config->sharedMemBytes,
++                        config->hStream, params, extra);
++}
++#endif
++#if defined(CUDART_VERSION) && CUDART_VERSION < 11080
++typedef struct cudaLaunchAttribute_st {
++  int id;
++  union {
++    char pad[64];
++  } val;
++} cudaLaunchAttribute;
++typedef struct cudaLaunchConfig_st {
++  dim3 gridDim;
++  dim3 blockDim;
++  size_t dynamicSmemBytes;
++  cudaStream_t stream;
++  cudaLaunchAttribute* attrs;
++  unsigned int numAttrs;
++} cudaLaunchConfig_t;
++#define cudaFuncAttributeNonPortableClusterSizeAllowed cudaFuncAttributeMax
++inline cudaError_t cudaLaunchKernelExC(const cudaLaunchConfig_t* config, const void* func,
++                                       void** args) {
++  if (config->numAttrs != 0) return cudaErrorNotSupported;
++  return cudaLaunchKernel(func, config->gridDim, config->blockDim, args, config->dynamicSmemBytes,
++                          config->stream);
++}
++#endif
++// ---- end CUDA < 11.8 compatibility ----
++
+ 
+ namespace tvm_cuda_launch {
+ inline constexpr size_t kMaxAttributes = 19;
+diff --git a/src/codegen/module_export.cc b/src/codegen/module_export.cc
+index 098afbf4..35ff81dc 100644
+--- a/src/codegen/module_export.cc
++++ b/src/codegen/module_export.cc
+@@ -83,6 +83,7 @@ class ModuleSerializer {
+  private:
+   void Init() {
+     CreateModuleIndex();
++    TopologicallyOrderGroups();
+     CreateImportTree();
+   }
+ 
+@@ -158,6 +159,44 @@ class ModuleSerializer {
+     }
+   }
+ 
++  // Order the contracted import DAG, rather than assuming DFS discovery order.
++  void TopologicallyOrderGroups() {
++    const size_t count = mod_group_vec_.size();
++    std::vector<std::unordered_set<size_t>> children(count);
++    std::vector<size_t> indegree(count, 0);
++    for (size_t parent = 0; parent < count; ++parent) {
++      for (const auto* m : mod_group_vec_[parent]) {
++        for (ffi::Any im : m->imports()) {
++          size_t child = mod2index_.at(im.cast<ffi::Module>().operator->());
++          if (child != parent && children[parent].insert(child).second) ++indegree[child];
++        }
++      }
++    }
++    std::vector<size_t> order;
++    for (size_t i = 0; i < count; ++i) {
++      if (indegree[i] == 0) order.push_back(i);
++    }
++    for (size_t pos = 0; pos < order.size(); ++pos) {
++      // Stable ordering makes exports reproducible despite unordered_set iteration.
++      std::vector<size_t> next(children[order[pos]].begin(), children[order[pos]].end());
++      std::sort(next.begin(), next.end());
++      for (size_t child : next) {
++        if (--indegree[child] == 0) order.push_back(child);
++      }
++    }
++    TVM_FFI_CHECK_EQ(order.size(), count, RuntimeError)
++        << "Cannot export: merging DSO modules creates a cycle in the import graph";
++    TVM_FFI_ICHECK(!order.empty() && order[0] == mod2index_.at(mod_.operator->()))
++        << "Root module must remain at index zero";
++    std::vector<std::vector<ffi::ModuleObj*>> sorted;
++    sorted.reserve(count);
++    for (size_t old_index : order) {
++      for (auto* m : mod_group_vec_[old_index]) mod2index_[m] = sorted.size();
++      sorted.push_back(std::move(mod_group_vec_[old_index]));
++    }
++    mod_group_vec_ = std::move(sorted);
++  }
++
+   void CreateImportTree() {
+     std::vector<int64_t> child_indices;
+ 
