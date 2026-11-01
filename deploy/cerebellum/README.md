@@ -67,7 +67,7 @@ the system trust store through `NODE_USE_SYSTEM_CA=1` before Node starts:
 pi-cerebellum
 # Or select the provider directly:
 NODE_USE_SYSTEM_CA=1 \
-  pi --provider cerebellum --model nemotron:e4b --thinking off --no-tools
+  pi --provider cerebellum --model nemotron:e4b --thinking off
 ```
 
 On nowhere, the root is installed at
@@ -83,10 +83,58 @@ tokens and keep 2048 recent tokens. The default provider is `cerebellum` and the
 `nemotron:e4b`. The `pi-llama-cpp` package remains installed with
 `extensions: []`, suppressing its independent localhost:9931 startup probe;
 re-enable it through `pi config` when using that integration. The ordinary Pi
-launcher defaults `NODE_USE_SYSTEM_CA=1` for existing terminal environments. The current MLC protocol rejects assistant `tool_calls` messages,
-so this launcher runs Pi in chat mode with `--no-tools`. Coding-agent tool
-round-trips need additional backend support. A Pi print-mode request returned
-`391` through this configuration with TLS verification enabled.
+launcher defaults `NODE_USE_SYSTEM_CA=1` for existing terminal environments.
+Tools are enabled: the launcher has no `--no-tools` flag and the model's
+`samplingParams` contains `temperature: 0, top_p: 1` without `tool_choice: none`.
+Start a new Pi process after changing its model configuration.
+
+`pi-clm` also remains installed with `extensions: []`. Its default guard uses
+`window − 4096 − reserve` (2048 input tokens on this model), so it withheld even
+a one-line read result and then withheld the model's attempt to retrieve it.
+Pi's own configured compaction remains active. Re-enable the extension through
+`pi config` when using a suitable context size or after tuning its policy.
+
+### Native Gemma4 tool calling
+
+The Xavier serving script installs `scripts/gemma4_tools.py` ahead of MLC's
+ordinary chat route. Requests with tools or tool history use the Nemotron
+checkpoint's NVIDIA chat template, including native tool declarations, calls
+and results. Raw completion generation uses the same optimized engine and
+DFlash configuration. A parser converts complete native calls to OpenAI
+`tool_calls` with JSON argument strings, and accepts the corresponding
+`role: tool` results on subsequent requests. Pi executes tools on the client
+computer; the service only generates calls.
+
+The adapter loads tokenizer/template files from
+`~/Models/nemotron-3.5-Bolt-E4B-BF16`, or `MLC_NEMOTRON_TOKENIZER` when set.
+It does not load that checkpoint's BF16 weights. Keep its tokenizer files and
+`chat_template.jinja`; this deployment uses Transformers 5.22.1 from the
+existing MLC virtual environment. Copy the adapter beside the serving script
+when deploying, along with the protocol update accepting string arguments.
+
+Supported tool choices are `auto` (the default) and `none`; forced/required
+tool choices, tool-conversation images, logprobs and response-format constraints
+are not implemented. Tool generations are buffered until the turn completes,
+then emitted as OpenAI SSE deltas with usage and finish reasons. SSE comments
+keep the connection active during generation. Malformed/incomplete calls and
+undeclared tool names produce errors rather than executable partial calls.
+Ordinary chat without tools retains MLC's existing streaming path. The 8K
+context and greedy-only restriction still apply.
+
+CPU regression checks:
+
+```bash
+python tests/python/serve/test_gemma4_tools.py
+# In the deployed MLC environment, this also exercises typed requests and SSE:
+PYTHONPATH=python MLC_LIBRARY_PATH=build \
+  ~/Workspaces/mlc-venv/bin/python tests/python/serve/test_gemma4_tools.py
+```
+
+Verified over HTTPS: a native `read` request returned a structured tool call;
+the next streaming turn accepted its matching result and quoted its proof word.
+All seven CPU checks pass in the deployed environment. A real Pi run with the
+ordinary tools and workspace context read a local file and returned its exact
+random proof word. No file contents were included in the user's test prompt.
 
 ```bash
 ssh cerebellum 'sudo systemctl status mlc-nemotron nginx tailscaled'

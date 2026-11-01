@@ -85,6 +85,9 @@ history are in [the experiment record](docs/deploy/xavier_dflash.md).
   Tensor Cores for current-chunk attention.
 - **Reproducible experiments:** fixed prompts, component tests, monitored runners
   and separate prefill variants.
+- **Xavier HTTPS service:** authenticated OpenAI-compatible chat and native
+  Nemotron/Gemma4 tool round-trips for Pi; see the
+  [deployment runbook](deploy/cerebellum/README.md).
 
 ## Build on Jetson AGX Xavier
 

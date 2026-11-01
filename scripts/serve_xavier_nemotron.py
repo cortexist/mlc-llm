@@ -6,10 +6,12 @@ from pathlib import Path
 
 import fastapi
 import uvicorn
+from gemma4_tools import Gemma4ToolAdapter
 
 import mlc_llm
 from mlc_llm.base import _LIB_PATH
 from mlc_llm.protocol import error_protocol
+from mlc_llm.protocol.openai_api_protocol import ChatCompletionRequest
 from mlc_llm.serve import AsyncMLCEngine, EngineConfig
 from mlc_llm.serve.entrypoints import openai_entrypoints
 from mlc_llm.serve.server import ServerContext
@@ -97,11 +99,26 @@ engine = AsyncMLCEngine(
 )
 if receipt is not None and receipt["target_caches"] != 1:
     raise RuntimeError(f"Unexpected cache installation: {receipt}")
+tool_adapter = Gemma4ToolAdapter(
+    engine,
+    os.environ.get(
+        "MLC_NEMOTRON_TOKENIZER", str(Path.home() / "Models/nemotron-3.5-Bolt-E4B-BF16")
+    ),
+)
 with ServerContext() as context:
     context.add_model("nemotron", engine)
     context.api_key = key
     app = fastapi.FastAPI(title="Cerebellum Nemotron API", docs_url=None, redoc_url=None)
     app.add_middleware(GreedyOnlyMiddleware)
+
+    @app.post(
+        "/v1/chat/completions", dependencies=[fastapi.Depends(openai_entrypoints.verify_api_key)]
+    )
+    async def chat(request: ChatCompletionRequest, raw_request: fastapi.Request):
+        if request.tools or any(m.tool_calls or m.role == "tool" for m in request.messages):
+            return await tool_adapter.handle(request, raw_request)
+        return await openai_entrypoints.request_chat_completion(request, raw_request)
+
     app.include_router(openai_entrypoints.app)
     app.exception_handler(error_protocol.BadRequestError)(error_protocol.bad_request_error_handler)
 

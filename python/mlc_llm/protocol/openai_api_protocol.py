@@ -238,7 +238,7 @@ class ChatTool(BaseModel):
 
 class ChatFunctionCall(BaseModel):
     name: str
-    arguments: Union[None, Dict[str, Any]] = None  # noqa: UP006
+    arguments: Union[None, str, Dict[str, Any]] = None  # noqa: UP006
 
 
 class ChatToolCall(BaseModel):
