@@ -430,6 +430,12 @@ class EngineImpl : public Engine {
       return TResult::Error(engine_config_res.UnwrapErr());
     }
     EngineConfig engine_config = engine_config_res.Unwrap();
+    if (engine_config->speculative_mode == SpeculativeMode::kDFlash &&
+        engine_config->prefix_cache_mode != PrefixCacheMode::kDisable) {
+      return TResult::Error(
+          "DFlash requires prefix_cache_mode='disable': target prefix entries "
+          "do not contain the draft's context features.");
+    }
     {
       if (engine_config->prefix_cache_mode == PrefixCacheMode::kRadix) {
         n->estate_->prefix_cache = PrefixCache::CreateRadixPrefixCache(
@@ -457,8 +463,8 @@ class EngineImpl : public Engine {
     // max_num_sequence * (spec_draft_length + 1) positions at once.
     int max_num_tokens = engine_config->max_num_sequence;
     if (engine_config->speculative_mode != SpeculativeMode::kDisable) {
-      max_num_tokens = std::max(max_num_tokens,
-          max_num_tokens * (engine_config->spec_draft_length + 1));
+      max_num_tokens =
+          std::max(max_num_tokens, max_num_tokens * (engine_config->spec_draft_length + 1));
     }
     // - Load model weights, create KV cache and workspace.
     n->model_workspaces_.clear();
@@ -470,10 +476,10 @@ class EngineImpl : public Engine {
       model->SetMaxNumSequence(max_num_tokens);
       model->SetPrefillChunkSize(engine_config->prefill_chunk_size);
       if (!(engine_config->speculative_mode == SpeculativeMode::kDFlash && model_id > 0)) {
-      model->CreateKVCache(engine_config->kv_cache_page_size, engine_config->max_num_sequence,
-                           engine_config->max_total_sequence_length,
-                           engine_config->prefill_chunk_size, engine_config->max_history_size,
-                           engine_config->prefix_cache_max_num_recycling_seqs);
+        model->CreateKVCache(engine_config->kv_cache_page_size, engine_config->max_num_sequence,
+                             engine_config->max_total_sequence_length,
+                             engine_config->prefill_chunk_size, engine_config->max_history_size,
+                             engine_config->prefix_cache_max_num_recycling_seqs);
       }
       n->model_workspaces_.push_back(
           ModelWorkspace{model->AllocEmbeddingTensor(), model->AllocHiddenStatesTensor()});
@@ -491,8 +497,7 @@ class EngineImpl : public Engine {
           n->models_[0]->CreateDraftTokenWorkspaceManager(max_num_tokens * 2);
       draft_token_workspace_manager->AllocWorkspace(
           &n->model_workspaces_[0],
-          /*require_hidden_states=*/engine_config->speculative_mode == SpeculativeMode::kEagle ||
-              engine_config->speculative_mode == SpeculativeMode::kDFlash);
+          /*require_hidden_states=*/engine_config->speculative_mode == SpeculativeMode::kEagle);
     }
     LogitProcessor logit_processor =
         n->models_[0]->CreateLogitProcessor(max_num_tokens, trace_recorder);
@@ -740,6 +745,7 @@ class EngineImpl : public Engine {
 
   void AbortRequest(const String& request_id) final {
     AbortRequestImpl(estate_, models_, request_id);
+    PruneDFlashState();
   }
 
   void AbortAllRequests() final {
@@ -771,6 +777,7 @@ class EngineImpl : public Engine {
                               estate_->request_stream_callback_,
                               engine_config_->max_single_sequence_length,
                               draft_token_workspace_manager_, trace_recorder_);
+        PruneDFlashState();
         return;
       }
     }
@@ -780,6 +787,23 @@ class EngineImpl : public Engine {
   }
 
   /************** Utility Functions **************/
+  void PruneDFlashState() {
+    if (engine_config_->speculative_mode != SpeculativeMode::kDFlash) return;
+    std::unordered_set<int64_t> active;
+    for (const auto& item : estate_->request_states) {
+      for (const RequestStateEntry& entry : item.second->entries) {
+        active.insert(entry->mstates[0]->internal_id);
+      }
+    }
+    auto& states = *model_workspaces_[0].dflash_projected_target_hidden;
+    for (auto it = states.begin(); it != states.end();) {
+      if (!active.count(it->first))
+        it = states.erase(it);
+      else
+        ++it;
+    }
+  }
+
   std::tuple<Optional<Session>, int, std::vector<int>> CreateDiscoSession(
       const std::vector<std::string>& model_libs,
       const std::vector<tvm::ffi::json::Object>& model_configs, Device device) {

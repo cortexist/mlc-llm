@@ -109,6 +109,7 @@ struct FunctionTable {
   Function verify_to_last_hidden_func_;
   Function fuse_embed_hidden_func_;
   Function get_logits_func_;
+  Function argmax_logits_func_;
   Function batch_get_logits_func_;
   Function batch_select_last_hidden_func_;
   Function softmax_func_;

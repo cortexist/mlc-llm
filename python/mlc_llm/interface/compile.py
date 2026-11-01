@@ -109,6 +109,14 @@ def _infer_kv_state_kind(model_type) -> str:
 
 def _compile(args: CompileArgs, model_config: ConfigBase):
     def _get_variable_bounds(model_config) -> Dict[str, int]:  # noqa: UP006
+        if hasattr(model_config, "block_size"):
+            return {
+                "seq_len": model_config.prefill_chunk_size,
+                "batch_size": model_config.max_batch_size,
+                "ctx_len": model_config.context_window_size,
+                "block_size": model_config.block_size,
+                "total_len": model_config.context_window_size + model_config.block_size,
+            }
         sliding_window_size = getattr(model_config, "sliding_window_size", -1)
         if sliding_window_size > 0:
             return {
@@ -184,6 +192,16 @@ def _compile(args: CompileArgs, model_config: ConfigBase):
             "batch_verify": ["batch_size", "seq_len"],
             "batch_verify_to_last_hidden_states": ["batch_size", "seq_len"],
         }
+        # DFlash exports have different names from the standard decode/verify
+        # entry points. Capture their bounded token-count variants as well.
+        # Do not capture draft_forward by exact context length: that grows on
+        # every round and would retain a graph per context length.
+        if __import__("os").environ.get("MLC_DFLASH_CUDA_GRAPH") == "1":
+            cuda_graph_symbolic_capture_hints.update(
+                batch_verify_with_hidden_states=["batch_size", "seq_len"],
+                get_logits=["seq_len"],
+                project_target_hidden=["seq_len"],
+            )
         avs = _kwargs.get("active_vocab_size", None)
         if avs is not None and avs <= 0:
             avs = None

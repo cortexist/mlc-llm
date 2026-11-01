@@ -6,8 +6,6 @@
  *  Key difference from EAGLE: NO draft model KV rollback (draft is stateless).
  */
 
-#include <tvm/runtime/threading_backend.h>
-
 #include <cmath>
 #include <exception>
 #include <iomanip>
@@ -87,7 +85,7 @@ class DFlashBatchVerifyActionObj : public EngineActionObj {
       RequestModelState draft_mstate = rsentries[i]->mstates[draft_model_id_];
       request_internal_ids.push_back(verify_mstate->internal_id);
       TVM_FFI_ICHECK_EQ(draft_lengths[i],
-                         static_cast<int>(draft_mstate->draft_output_tokens.size()));
+                        static_cast<int>(draft_mstate->draft_output_tokens.size()));
       // last committed token + all draft tokens
       all_tokens_to_verify.push_back(draft_mstate->committed_tokens.back().GetTokenId());
       draft_token_slots_.push_back(0);  // placeholder for committed token
@@ -118,18 +116,19 @@ class DFlashBatchVerifyActionObj : public EngineActionObj {
 
     RECORD_EVENT(trace_recorder_, request_ids, "start verify embedding");
     ObjectRef embeddings = models_[verify_model_id_]->TokenEmbed(
-        {IntTuple{all_tokens_to_verify.begin(), all_tokens_to_verify.end()}});
+        {Shape{all_tokens_to_verify.begin(), all_tokens_to_verify.end()}});
     RECORD_EVENT(trace_recorder_, request_ids, "finish verify embedding");
 
     RECORD_EVENT(trace_recorder_, request_ids, "start verify");
     // Use BatchVerifyWithHiddenStates to also extract intermediate hidden states
     // for the next DFlash draft round.
     auto [verify_logits, target_hidden] = models_[verify_model_id_]->BatchVerifyWithHiddenStates(
-        embeddings, request_internal_ids, verify_lengths, token_tree_parent_ptr);
+        embeddings, request_internal_ids, verify_lengths, token_tree_parent_ptr,
+        all_tokens_to_verify);
     // Reshape logits from [1, total_length, v] to [total_length, v] for logit processor.
     int total_verify_length = cum_verify_lengths.back();
-    Tensor logits = verify_logits.CreateView(
-        {verify_logits->shape[1], verify_logits->shape[2]}, verify_logits->dtype);
+    Tensor logits = tvm::runtime::CreateView(
+        verify_logits, {verify_logits.shape()[1], verify_logits.shape()[2]}, verify_logits.dtype());
     RECORD_EVENT(trace_recorder_, request_ids, "finish verify");
 
     // - Update logits and compute probs.
@@ -145,16 +144,17 @@ class DFlashBatchVerifyActionObj : public EngineActionObj {
 
     std::vector<std::vector<SampleResult>> sample_results_arr;
     if (deterministic_generation) {
-      Tensor logits_on_host = CopyTensorToCPU(logits);
+      std::vector<int32_t> greedy_tokens = models_[verify_model_id_]->BatchArgmax(logits);
+      Tensor logits_on_host{nullptr};
+      if (DFlashDebugEnabled()) logits_on_host = CopyTensorToCPU(logits);
       sample_results_arr.resize(num_rsentries);
       for (int i = 0; i < num_rsentries; ++i) {
         int verify_start = cum_verify_lengths[i];
         int draft_length = verify_lengths[i] - 1;
         int draft_token_idx = 0;
         // Debug: per-position top-5 logit comparison (draft vs target)
-        {
-          LOG(WARNING) << "[DFlash-debug] req=" << i
-                       << " draft_len=" << draft_length
+        if (DFlashDebugEnabled()) {
+          LOG(WARNING) << "[DFlash-debug] req=" << i << " draft_len=" << draft_length
                        << " verify_start=" << verify_start;
           for (int d = 0; d < std::min(draft_length, 8); ++d) {
             int32_t draft_tok = draft_output_tokens[i][d].GetTokenId();
@@ -164,9 +164,9 @@ class DFlashBatchVerifyActionObj : public EngineActionObj {
             // Find draft token's rank in target logits
             int draft_rank = -1;
             float draft_logit_in_target = 0;
-            int64_t vocab_size = logits_on_host->shape[1];
-            const float* target_row = static_cast<const float*>(logits_on_host->data)
-                                      + (verify_start + d) * vocab_size;
+            int64_t vocab_size = logits_on_host.shape()[1];
+            const float* target_row = static_cast<const float*>(logits_on_host.data_ptr()) +
+                                      (verify_start + d) * vocab_size;
             draft_logit_in_target = target_row[draft_tok];
             // Compute approximate rank
             int rank = 0;
@@ -175,18 +175,14 @@ class DFlashBatchVerifyActionObj : public EngineActionObj {
             }
             draft_rank = rank;
 
-            LOG(WARNING) << "  pos=" << d
-                         << (match ? " MATCH" : " MISS")
-                         << " draft=" << draft_tok
-                         << " target=" << target_tok
-                         << " draft_rank_in_target=" << draft_rank
+            LOG(WARNING) << "  pos=" << d << (match ? " MATCH" : " MISS") << " draft=" << draft_tok
+                         << " target=" << target_tok << " draft_rank_in_target=" << draft_rank
                          << " draft_logit=" << std::fixed << std::setprecision(2)
-                         << draft_logit_in_target
-                         << " target_top5=" << FormatTopK(target_topk);
+                         << draft_logit_in_target << " target_top5=" << FormatTopK(target_topk);
           }
         }
         for (; draft_token_idx < draft_length; ++draft_token_idx) {
-          int32_t target_token_id = ArgmaxTokenId(logits_on_host, verify_start + draft_token_idx);
+          int32_t target_token_id = greedy_tokens[verify_start + draft_token_idx];
           if (target_token_id != draft_output_tokens[i][draft_token_idx].GetTokenId()) {
             sample_results_arr[i].push_back(SampleResult{{target_token_id, 1.0f}, {}});
             break;
@@ -195,8 +191,7 @@ class DFlashBatchVerifyActionObj : public EngineActionObj {
         }
         if (draft_token_idx == draft_length) {
           sample_results_arr[i].push_back(
-              SampleResult{{ArgmaxTokenId(logits_on_host, verify_start + draft_length), 1.0f},
-                           {}});
+              SampleResult{{greedy_tokens[verify_start + draft_length], 1.0f}, {}});
         }
       }
     } else {
@@ -211,10 +206,9 @@ class DFlashBatchVerifyActionObj : public EngineActionObj {
       std::iota(sample_indices.begin(), sample_indices.end(), 0);
       Tensor renormalized_probs = sampler_->BatchRenormalizeProbsByTopP(
           probs_on_device, sample_indices, request_ids, generation_cfg);
-      std::tie(sample_results_arr, std::ignore) =
-          sampler_->BatchVerifyDraftTokensWithProbAfterTopP(
-              renormalized_probs, request_ids, cum_verify_lengths, generation_cfg, rngs,
-              draft_output_tokens, token_tree_parent_ptr, draft_probs_on_device);
+      std::tie(sample_results_arr, std::ignore) = sampler_->BatchVerifyDraftTokensWithProbAfterTopP(
+          renormalized_probs, request_ids, cum_verify_lengths, generation_cfg, rngs,
+          draft_output_tokens, token_tree_parent_ptr, draft_probs_on_device);
     }
     TVM_FFI_ICHECK_EQ(sample_results_arr.size(), num_rsentries);
 
@@ -229,7 +223,17 @@ class DFlashBatchVerifyActionObj : public EngineActionObj {
     frontier_token_ids.reserve(num_rsentries);
 
     for (int i = 0; i < num_rsentries; ++i) {
-      const std::vector<SampleResult>& sample_results = sample_results_arr[i];
+      std::vector<SampleResult>& sample_results = sample_results_arr[i];
+      // A successful block can cross max_tokens. Limit the committed block
+      // before streaming and accounting, rather than finishing after an
+      // oversized block has already been returned to the caller.
+      int committed = rsentries[i]->mstates[verify_model_id_]->committed_tokens.size();
+      int remaining = engine_config_->max_single_sequence_length -
+                      rsentries[i]->request->prompt_tokens - committed;
+      int max_tokens = rsentries[i]->request->generation_cfg->max_tokens;
+      if (max_tokens >= 0) remaining = std::min(remaining, max_tokens - committed);
+      TVM_FFI_ICHECK_GT(remaining, 0);
+      if (static_cast<int>(sample_results.size()) > remaining) sample_results.resize(remaining);
       int accept_length = sample_results.size();
       TVM_FFI_ICHECK_GE(accept_length, 1);
       for (SampleResult sample_result : sample_results) {
@@ -241,10 +245,10 @@ class DFlashBatchVerifyActionObj : public EngineActionObj {
       rsentries[i]->rstate->metrics.decode_tokens += accept_length;
       estate->metrics.spec_decode.Update(cum_verify_lengths[i + 1] - cum_verify_lengths[i],
                                          accept_length);
-      LOG(WARNING) << "[DFlash] request=" << rsentries[i]->request->id
-                << " draft_len=" << draft_lengths[i]
-                << " accepted=" << accept_length
-                << " rate=" << (100.0 * accept_length / (draft_lengths[i] + 1)) << "%";
+      if (DFlashDebugEnabled())
+        LOG(WARNING) << "[DFlash] request=" << rsentries[i]->request->id
+                     << " draft_len=" << draft_lengths[i] << " accepted=" << accept_length
+                     << " rate=" << (100.0 * accept_length / (draft_lengths[i] + 1)) << "%";
 
       // Commit accepted tokens to target model KV cache
       verify_model_seq_internal_ids.push_back(rsentries[i]->mstates[verify_model_id_]->internal_id);
@@ -271,23 +275,23 @@ class DFlashBatchVerifyActionObj : public EngineActionObj {
     // of the next block (in noise_embedding), not part of the context.
     {
       RECORD_EVENT(trace_recorder_, request_ids, "start project target hidden (verify)");
-      {
-        Tensor th = Downcast<Tensor>(target_hidden);
-        LOG(WARNING) << "[DFlash] target_hidden shape=["
-                     << th->shape[0] << "," << th->shape[1] << "," << th->shape[2]
-                     << "] dtype=" << th->dtype;
+      if (DFlashDebugEnabled()) {
+        Tensor th = target_hidden.as_or_throw<Tensor>();
+        LOG(WARNING) << "[DFlash] target_hidden shape=[" << th.shape()[0] << "," << th.shape()[1]
+                     << "," << th.shape()[2] << "] dtype=" << th.dtype();
         TensorStats th_stats = ComputeTensorStats(th);
         LOG(WARNING) << "[DFlash] " << FormatTensorStats("target_hidden", th_stats);
       }
       Tensor verify_projected =
-          Downcast<Tensor>(models_[draft_model_id_]->ProjectTargetHiddenStates(target_hidden));
-      LOG(WARNING) << "[DFlash] verify_projected shape=["
-                   << verify_projected->shape[0] << "," << verify_projected->shape[1]
-                   << "," << verify_projected->shape[2]
-                   << "] dtype=" << verify_projected->dtype;
-      {
-        TensorStats vp_stats = ComputeTensorStats(verify_projected);
-        LOG(WARNING) << "[DFlash] " << FormatTensorStats("verify_projected", vp_stats);
+          models_[draft_model_id_]->ProjectTargetHiddenStates(target_hidden).as_or_throw<Tensor>();
+      if (DFlashDebugEnabled()) {
+        LOG(WARNING) << "[DFlash] verify_projected shape=[" << verify_projected.shape()[0] << ","
+                     << verify_projected.shape()[1] << "," << verify_projected.shape()[2]
+                     << "] dtype=" << verify_projected.dtype();
+        {
+          TensorStats vp_stats = ComputeTensorStats(verify_projected);
+          LOG(WARNING) << "[DFlash] " << FormatTensorStats("verify_projected", vp_stats);
+        }
       }
       auto& pth_map = *model_workspaces_[0].dflash_projected_target_hidden;
       int64_t verify_offset = 0;

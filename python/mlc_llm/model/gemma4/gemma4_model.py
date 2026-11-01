@@ -335,12 +335,14 @@ class Gemma4TextModel(nn.Module):
         paged_kv_cache: PagedKVCache,
         token_ids: Tensor,
         modality_ids: Tensor | None = None,
+        target_layer_ids: tuple[int, ...] | None = None,
     ) -> Tensor:
         positions = paged_kv_cache.get_query_positions(
             input_embeds.shape[0] * input_embeds.shape[1]
         )
         per_layer_inputs = self._per_layer_inputs(input_embeds, token_ids, modality_ids)
         hidden_states = input_embeds
+        target_hidden = []
         shared_kv: Dict[str, Tuple[Tensor, Tensor]] = {}  # noqa: UP006
         for layer_idx, layer in enumerate(self.layers):
             layer_type = self.config.layer_types[layer_idx]
@@ -351,11 +353,16 @@ class Gemma4TextModel(nn.Module):
                 positions,
                 shared_kv.get(layer_type),
             )
+            if target_layer_ids is not None and layer_idx in target_layer_ids:
+                target_hidden.append(hidden_states)
             if layer_idx in self.shared_kv_source_layers:
                 if current_kv is None:
                     raise ValueError("The shared-KV source layer did not produce K/V states")
                 shared_kv[layer_type] = current_kv
-        return self.norm(hidden_states)
+        final_hidden = self.norm(hidden_states)
+        if target_layer_ids is not None:
+            return final_hidden, op.concat(target_hidden, dim=-1)
+        return final_hidden
 
 
 class Gemma4ForConditionalGeneration(nn.Module):
@@ -364,6 +371,13 @@ class Gemma4ForConditionalGeneration(nn.Module):
     def __init__(self, config: Gemma4Config):
         self.config = config
         self.language_model = Gemma4TextModel(config.text_config)
+        self.dflash_target_layer_ids = tuple(config.kwargs.get("dflash_target_layer_ids", ()))
+        if self.dflash_target_layer_ids and (
+            list(self.dflash_target_layer_ids) != sorted(set(self.dflash_target_layer_ids))
+            or min(self.dflash_target_layer_ids) < 0
+            or max(self.dflash_target_layer_ids) >= config.text_config.num_hidden_layers
+        ):
+            raise ValueError("DFlash target layers must be unique, ascending, valid layer indices")
         self.audio_preprocessor = Gemma4AudioFeatureExtractor(config.audio_config)
         self.audio_tower = Gemma4AudioModel(config.audio_config)
         self.embed_audio = Gemma4MultimodalEmbedder(config.audio_config, config.text_config)
@@ -469,6 +483,39 @@ class Gemma4ForConditionalGeneration(nn.Module):
         logits = self._forward(input_embeds, paged_kv_cache, token_ids=token_ids)
         return logits, paged_kv_cache
 
+    def batch_prefill_with_hidden_states(
+        self,
+        input_embeds: Tensor,
+        token_ids: Tensor,
+        modality_ids: Tensor,
+        logit_positions: Tensor,
+        paged_kv_cache: PagedKVCache,
+    ):
+        op_ext.configure()
+        hidden, features = self.language_model(
+            input_embeds,
+            paged_kv_cache,
+            token_ids,
+            modality_ids,
+            target_layer_ids=self.dflash_target_layer_ids,
+        )
+        return self.get_logits(op.take(hidden, logit_positions, axis=1)), features, paged_kv_cache
+
+    def batch_verify_with_hidden_states(
+        self,
+        input_embeds: Tensor,
+        token_ids: Tensor,
+        paged_kv_cache: PagedKVCache,
+    ):
+        op_ext.configure()
+        hidden, features = self.language_model(
+            input_embeds,
+            paged_kv_cache,
+            token_ids,
+            target_layer_ids=self.dflash_target_layer_ids,
+        )
+        return self.get_logits(hidden), features, paged_kv_cache
+
     def create_paged_kv_cache(
         self,
         max_batch_size: tirx.Var,
@@ -556,6 +603,13 @@ class Gemma4ForConditionalGeneration(nn.Module):
                 "$": none,
             },
         }
+        if self.dflash_target_layer_ids:
+            mod_spec["get_logits"] = {
+                "hidden_states": nn.spec.Tensor(["seq_len", hidden_size], self.dtype),
+                "$": packed,
+            }
+            mod_spec["batch_prefill_with_hidden_states"] = dict(mod_spec["batch_prefill_tokens"])
+            mod_spec["batch_verify_with_hidden_states"] = dict(mod_spec["batch_verify_tokens"])
         if _TEXT_ONLY:
             mod_spec.pop("audio_embed")
         return nn.spec.ModuleSpec.from_raw(mod_spec, self)

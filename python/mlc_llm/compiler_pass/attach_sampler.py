@@ -22,6 +22,7 @@ class AttachGPUSamplingFunc:
         max_batch_size = variable_bounds["batch_size"]
         self.variable_bounds = {
             "batch_size": max_batch_size,
+            "num_greedy_tokens": variable_bounds.get("seq_len", max_batch_size),
             "num_samples": max_batch_size,
             "num_positions": 6 * max_batch_size,
         }
@@ -36,6 +37,7 @@ class AttachGPUSamplingFunc:
             return mod
 
         bb = relax.BlockBuilder(mod)
+        greedy_gv = _attach_argmax_logits(bb) if target_kind == "cuda" else None
         if target_kind == "webgpu":
             # Only attach functions that do not contain i8s for WebGPU
             gv_names = [
@@ -58,6 +60,8 @@ class AttachGPUSamplingFunc:
                 ]
             ]
 
+        if greedy_gv is not None:
+            gv_names.append(greedy_gv.name_hint)
         mod = bb.finalize()
         for gv_name in gv_names:
             mod[gv_name] = (
@@ -66,6 +70,25 @@ class AttachGPUSamplingFunc:
                 .with_attr("tir_non_negative_var", self.non_negative_var)
             )
         return mod
+
+
+def _attach_argmax_logits(bb: relax.BlockBuilder):
+    """Return token IDs on device, avoiding a vocabulary-sized CPU transfer.
+
+    Argmax selects the first index on ties, matching the serving CPU path.
+    Logit penalties and grammar masks must be applied before this function.
+    """
+    rows = tirx.Var("num_greedy_tokens", "int64")
+    vocab = tirx.Var("vocab_size", "int64")
+    logits = relax.Var("logits", relax.TensorType((rows, vocab), "float32"))
+    with bb.function("argmax_logits", [logits]):
+        with bb.dataflow():
+            ids = bb.emit(relax.op.argmax(logits, axis=-1))
+            # TVM's reduction identity uses index -1 for all -inf rows. Match
+            # the existing CPU loop, which retains token zero in that case.
+            ids = bb.emit(relax.op.maximum(ids, relax.const(0, "int64")))
+            output = bb.emit_output(relax.op.astype(ids, "int32"))
+        return bb.emit_func_output(output)
 
 
 def _attach_multinomial_sampling_func(bb: relax.BlockBuilder):

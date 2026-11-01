@@ -100,12 +100,14 @@ BatchPrefillBaseActionObj::GetRequestStateEntriesToPrefill(EngineState estate) {
         // A request state entry can be prefilled only when:
         // - it has inputs, and
         // - it has no parent or its parent is alive and has no remaining input.
-        bool inputs_empty = (i < static_cast<int>(rsentry->mstates.size())) ?
-            rsentry->mstates[i]->inputs.empty() : true;
-        bool parent_blocks = rsentry->parent_idx != -1 &&
-             (rstate->entries[rsentry->parent_idx]->status == RequestStateStatus::kPending ||
-              (i < static_cast<int>(rstate->entries[rsentry->parent_idx]->mstates.size()) &&
-               !rstate->entries[rsentry->parent_idx]->mstates[i]->inputs.empty()));
+        bool inputs_empty = (i < static_cast<int>(rsentry->mstates.size()))
+                                ? rsentry->mstates[i]->inputs.empty()
+                                : true;
+        bool parent_blocks =
+            rsentry->parent_idx != -1 &&
+            (rstate->entries[rsentry->parent_idx]->status == RequestStateStatus::kPending ||
+             (i < static_cast<int>(rstate->entries[rsentry->parent_idx]->mstates.size()) &&
+              !rstate->entries[rsentry->parent_idx]->mstates[i]->inputs.empty()));
         if (inputs_empty || parent_blocks) {
           continue;
         }
@@ -475,10 +477,10 @@ void BatchPrefillBaseActionObj::UpdateRequestStateEntriesWithSampleResults(
       for (const RequestModelState& mstate : rsentries_for_sample[i]->mstates) {
         TVM_FFI_ICHECK(!mstate->require_retokenization_in_next_decode);
         mstate->CommitToken(sample_results[i]);
-        // live update the output metrics
-        rsentries_for_sample[i]->rstate->metrics.completion_tokens += 1;
-        rsentries_for_sample[i]->rstate->metrics.prefill_end_time_point = tnow;
       }
+      // Count a generated token once per request, not once per model state.
+      rsentries_for_sample[i]->rstate->metrics.completion_tokens += 1;
+      rsentries_for_sample[i]->rstate->metrics.prefill_end_time_point = tnow;
       continue;
     }
 

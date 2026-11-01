@@ -46,9 +46,9 @@ struct DFlashProjectedHiddenState {
 
   Tensor View() const {
     TVM_FFI_ICHECK(defined());
-    TVM_FFI_ICHECK_EQ(storage->ndim, 3);
+    TVM_FFI_ICHECK_EQ(storage.ndim(), 3);
     TVM_FFI_ICHECK_LE(length, capacity);
-    return storage.CreateView({1, length, storage->shape[2]}, storage->dtype);
+    return tvm::runtime::CreateView(storage, {1, length, storage.shape()[2]}, storage.dtype());
   }
 };
 
@@ -56,6 +56,13 @@ struct DFlashDraftAuxTensors {
   Tensor cos{nullptr};
   Tensor sin{nullptr};
   Tensor mask{nullptr};
+};
+
+struct DFlashSettings {
+  int mask_token_id;
+  int head_dim;
+  double rope_theta;
+  int sliding_window;
 };
 
 /*!
@@ -102,7 +109,7 @@ struct ModelWorkspace {
           std::make_shared<std::unordered_map<int64_t, DFlashProjectedHiddenState>>();
 
   /*!
-   * \brief DFlash draft auxiliary tensors cached by total sequence length.
+   * \brief One geometrically grown DFlash auxiliary buffer (key zero).
    */
   std::shared_ptr<std::unordered_map<int64_t, DFlashDraftAuxTensors>> dflash_draft_aux_tensors =
       std::make_shared<std::unordered_map<int64_t, DFlashDraftAuxTensors>>();
@@ -180,6 +187,9 @@ class ModelObj : public Object {
    * \return The computed logits.
    */
   virtual Tensor GetLogits(const ObjectRef& last_hidden_states) = 0;
+
+  /*! \brief Greedy token IDs after logit processing; copies only IDs to CPU. */
+  virtual std::vector<int32_t> BatchArgmax(const Tensor& logits) = 0;
 
   virtual Array<Tensor> GetMultiStepLogits(const ObjectRef& last_hidden_states) = 0;
 
@@ -418,6 +428,8 @@ class ModelObj : public Object {
 
   /*********************** DFlash Speculative Decoding  ***********************/
 
+  virtual DFlashSettings GetDFlashSettings() const = 0;
+
   /*!
    * \brief Batch prefill returning both logits and intermediate hidden states.
    * Used by DFlash target model for extracting features from specific layers.
@@ -428,7 +440,8 @@ class ModelObj : public Object {
    */
   virtual std::pair<Tensor, ObjectRef> BatchPrefillWithHiddenStates(
       const ObjectRef& embeddings, const std::vector<int64_t>& seq_ids,
-      const std::vector<int>& lengths) = 0;
+      const std::vector<int>& lengths, const std::vector<int32_t>& token_ids = {},
+      const std::vector<int32_t>& modality_ids = {}) = 0;
   virtual std::pair<Tensor, ObjectRef> BatchDecodeWithHiddenStates(
       const ObjectRef& embeddings, const std::vector<int64_t>& seq_ids) = 0;
 
@@ -443,8 +456,8 @@ class ModelObj : public Object {
    */
   virtual std::pair<Tensor, ObjectRef> BatchVerifyWithHiddenStates(
       const ObjectRef& embeddings, const std::vector<int64_t>& seq_ids,
-      const std::vector<int>& lengths,
-      const std::vector<int64_t>& token_tree_parent_ptr) = 0;
+      const std::vector<int>& lengths, const std::vector<int64_t>& token_tree_parent_ptr,
+      const std::vector<int32_t>& token_ids = {}) = 0;
 
   /*!
    * \brief Project concatenated multi-layer target hidden states to hidden_size.

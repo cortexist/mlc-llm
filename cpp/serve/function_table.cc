@@ -224,6 +224,7 @@ void FunctionTable::_InitFunctions() {
   Module mod = this->use_disco ? this->disco_mod.value()->DebugGetFromRemote(0).cast<Module>()
                                : this->local_vm.value();
   this->get_logits_func_ = mod_get_func("get_logits");
+  this->argmax_logits_func_ = mod_get_func("argmax_logits");
   this->batch_get_logits_func_ = mod_get_func("batch_get_logits");
   this->batch_select_last_hidden_func_ = mod_get_func("batch_select_last_hidden_states");
   this->softmax_func_ =

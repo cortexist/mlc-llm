@@ -5,6 +5,7 @@
  *  hidden states, project them, and run one-step block draft.
  */
 
+#include "../../support/nvtx.h"
 #include "../sampler/sampler.h"
 #include "batch_prefill_base.h"
 #include "dflash_commons.h"
@@ -80,6 +81,7 @@ class DFlashNewRequestPrefillActionObj : public BatchPrefillBaseActionObj {
       request_internal_ids.reserve(num_rsentries);
       ObjectRef embeddings = model_workspaces_[model_id].embeddings;
       int cum_prefill_length = 0;
+      std::vector<int32_t> token_ids, modality_ids;
       bool single_input =
           num_rsentries == 1 && prefill_inputs[0].rsentry->mstates[model_id]->inputs.size() == 1;
 
@@ -89,6 +91,9 @@ class DFlashNewRequestPrefillActionObj : public BatchPrefillBaseActionObj {
         TVM_FFI_ICHECK(mstate->draft_output_tokens.empty());
         TVM_FFI_ICHECK(mstate->draft_token_slots.empty());
         if (status_before_prefill[i] == RequestStateStatus::kPending) {
+          // Pending entries start a fresh prefill (including after preemption).
+          // Never append to context left by an earlier use of this internal ID.
+          projected_hidden_state_map.erase(mstate->internal_id);
           if (!estate->prefix_cache->HasSequence(mstate->internal_id)) {
             if (rsentry->parent_idx == -1) {
               models_[model_id]->AddNewSequence(mstate->internal_id);
@@ -116,6 +121,7 @@ class DFlashNewRequestPrefillActionObj : public BatchPrefillBaseActionObj {
 
         RECORD_EVENT(trace_recorder_, rsentry->request->id, "start embedding");
         for (int j = 0; j < static_cast<int>(input_data.size()); ++j) {
+          AppendTokenAndModalityIds(input_data[j], &token_ids, &modality_ids);
           embeddings = input_data[j]->GetEmbedding(
               models_[model_id],
               /*dst=*/!single_input ? &model_workspaces_[model_id].embeddings : nullptr,
@@ -130,15 +136,16 @@ class DFlashNewRequestPrefillActionObj : public BatchPrefillBaseActionObj {
       // Run target model prefill with intermediate hidden state extraction.
       // BatchPrefillWithHiddenStates returns (logits_at_logit_positions, target_hidden).
       auto [prefill_logits, target_hidden] = models_[model_id]->BatchPrefillWithHiddenStates(
-          embeddings, request_internal_ids, prefill_lengths);
+          embeddings, request_internal_ids, prefill_lengths, token_ids, modality_ids);
       RECORD_EVENT(trace_recorder_, request_ids, "finish prefill");
 
       // Commit prefix cache changes
       estate->prefix_cache->CommitSequenceExtention();
 
       // Reshape logits from [1, num_sequences, v] to [num_sequences, v] for sampling.
-      logits_for_sample = prefill_logits.CreateView(
-          {prefill_logits->shape[1], prefill_logits->shape[2]}, prefill_logits->dtype);
+      logits_for_sample = tvm::runtime::CreateView(
+          prefill_logits, {prefill_logits.shape()[1], prefill_logits.shape()[2]},
+          prefill_logits.dtype());
 
       // Project target hidden states via draft model and store per-request.
       // target_hidden: [1, total_seq_len, num_layers * hidden_size]
@@ -147,7 +154,7 @@ class DFlashNewRequestPrefillActionObj : public BatchPrefillBaseActionObj {
       ObjectRef projected = all_models_[1]->ProjectTargetHiddenStates(target_hidden);
       RECORD_EVENT(trace_recorder_, request_ids, "finish project target hidden");
 
-      Tensor projected_nd = Downcast<Tensor>(projected);
+      Tensor projected_nd = projected.as_or_throw<Tensor>();
 
       int64_t projected_offset = 0;
       for (int i = 0; i < num_rsentries; ++i) {
@@ -179,10 +186,7 @@ class DFlashNewRequestPrefillActionObj : public BatchPrefillBaseActionObj {
       int remaining_num_child_to_activate = prefill_inputs[i].num_child_to_activate;
       for (int child_idx : rsentry->child_indices) {
         if ((rstates_of_entries[i]->entries[child_idx]->status == RequestStateStatus::kPending &&
-                 rstates_of_entries[i]
-                     ->entries[child_idx]
-                     ->mstates[0]
-                     ->committed_tokens.empty() ||
+                 rstates_of_entries[i]->entries[child_idx]->mstates[0]->committed_tokens.empty() ||
              fork_rsentry_child_map[i].count(child_idx))) {
           fork_rsentry_child_map[i].insert(child_idx);
           child_sample_indices.push_back(i);
@@ -227,10 +231,10 @@ class DFlashNewRequestPrefillActionObj : public BatchPrefillBaseActionObj {
       mstates_for_logitproc.push_back(prefill_inputs[i].rsentry->mstates[0]);
     }
 
-    const auto& [renormalized_probs, sample_results] = ApplyLogitProcessorAndSample(
-        logit_processor_, sampler_, logits_for_sample, generation_cfg, request_ids,
-        mstates_for_logitproc, rngs, sample_indices, child_generation_cfg, child_request_ids,
-        child_sample_indices);
+    const auto& [renormalized_probs, sample_results] =
+        ApplyLogitProcessorAndSample(logit_processor_, sampler_, logits_for_sample, generation_cfg,
+                                     request_ids, mstates_for_logitproc, rngs, sample_indices,
+                                     child_generation_cfg, child_request_ids, child_sample_indices);
     UpdateRequestStateEntriesWithSampleResults(rsentries_for_sample, rsentry_activated,
                                                sample_results);
 
@@ -238,9 +242,11 @@ class DFlashNewRequestPrefillActionObj : public BatchPrefillBaseActionObj {
     // Do NOT append the frontier token — during DFlash training, the context only
     // contains tokens BEFORE the draft block. The frontier (first block token) goes
     // into the noise_embedding, not the projected context.
-    for (int sample_idx = 0; sample_idx < static_cast<int>(rsentries_for_sample.size()); ++sample_idx) {
+    for (int sample_idx = 0; sample_idx < static_cast<int>(rsentries_for_sample.size());
+         ++sample_idx) {
       int source_prefill_idx = child_sample_indices[sample_idx];
-      int64_t source_internal_id = prefill_inputs[source_prefill_idx].rsentry->mstates[0]->internal_id;
+      int64_t source_internal_id =
+          prefill_inputs[source_prefill_idx].rsentry->mstates[0]->internal_id;
       int64_t sampled_internal_id = rsentries_for_sample[sample_idx]->mstates[0]->internal_id;
       if (sampled_internal_id != source_internal_id) {
         projected_hidden_state_map[sampled_internal_id] =
@@ -308,7 +314,7 @@ class DFlashNewRequestPrefillActionObj : public BatchPrefillBaseActionObj {
           }
           if (result.reused_seq_pop_last_tokens > 0) {
             models_[0]->PopNFromKVCache(rsentry->mstates[0]->internal_id,
-                                         result.reused_seq_pop_last_tokens);
+                                        result.reused_seq_pop_last_tokens);
           }
         }
       }
