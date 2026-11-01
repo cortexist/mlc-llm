@@ -15,6 +15,7 @@ from mlc_llm import op as op_ext
 from mlc_llm.model.gemma.gemma_model import GemmaEmbedding
 from mlc_llm.model.model_utils import index_last_token
 from mlc_llm.nn import PagedKVCache, RopeMode
+from mlc_llm.op import xavier
 from mlc_llm.protocol.artifact_manifest import ArtifactDefinition
 
 from .gemma4_audio import (
@@ -397,6 +398,7 @@ class Gemma4ForConditionalGeneration(nn.Module):
         hidden_states = self.embed_audio(hidden_states)
         return op.squeeze(hidden_states, axis=0)
 
+    @xavier.small_batch()
     def get_logits(self, hidden_states: Tensor) -> Tensor:
         logits = self.language_model.embed_tokens.lm_head_forward(hidden_states)
         cap = self.config.text_config.final_logit_softcapping
@@ -439,6 +441,7 @@ class Gemma4ForConditionalGeneration(nn.Module):
         )
         return self.get_logits(index_last_token(hidden_states)), paged_kv_cache
 
+    @xavier.small_batch()
     def decode_tokens(self, token_ids: Tensor, paged_kv_cache: PagedKVCache):
         input_embeds = self.language_model.embed(token_ids)
         logits = self._forward(
@@ -465,6 +468,7 @@ class Gemma4ForConditionalGeneration(nn.Module):
         )
         return logits, paged_kv_cache
 
+    @xavier.small_batch()
     def batch_decode_tokens(
         self,
         input_embeds: Tensor,
@@ -474,6 +478,7 @@ class Gemma4ForConditionalGeneration(nn.Module):
         logits = self._forward(input_embeds, paged_kv_cache, token_ids=token_ids)
         return logits, paged_kv_cache
 
+    @xavier.small_batch()
     def batch_verify_tokens(
         self,
         input_embeds: Tensor,
@@ -501,6 +506,7 @@ class Gemma4ForConditionalGeneration(nn.Module):
         )
         return self.get_logits(op.take(hidden, logit_positions, axis=1)), features, paged_kv_cache
 
+    @xavier.small_batch()
     def batch_verify_with_hidden_states(
         self,
         input_embeds: Tensor,

@@ -403,6 +403,11 @@ class GroupQuantizeLinear(nn.Module):
         ret : nn.Tensor
             The output tensor for the group quantized linear layer.
         """
+        from mlc_llm.op import xavier
+
+        if xavier.enabled(self.config):
+            y = xavier.q4_linear(x, self.q_weight, self.q_scale, self.out_dtype)
+            return y + self.bias if self.bias is not None else y
         w = nn.op.tensor_expr_op(
             lambda weight, scale: self.config._dequantize(
                 weight,
@@ -537,6 +542,10 @@ class GroupQuantizeEmbedding(nn.Module):
         ret : nn.Tensor
             The output tensor for the lm_head layer.
         """
+        from mlc_llm.op import xavier
+
+        if xavier.enabled(self.config):
+            return xavier.q4_linear(x, self.q_weight, self.q_scale, "float32")
         w = nn.op.tensor_expr_op(
             lambda weight, scale: self.config._dequantize(
                 weight,

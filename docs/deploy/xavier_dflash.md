@@ -10,7 +10,185 @@ F16 GGUF draft converted without requantization. It is an isolated experiment,
 not an installed service. The original MLC checkout/wheel and llama.cpp remain
 available. Validation covers greedy, one-sequence text generation.
 
-## Status and observed results
+## Native Xavier kernels (100 W port follow-up)
+
+The user moved the board to the power station's USB-C port labeled 100 W and
+rebooted it. This records the physical connection, not a verified PD contract.
+The new experiments retain MAXN/fixed clocks and serialize compilation and GPU
+work under `run_monitored.py`. Evidence is saved locally in
+`mlc-jp5/logs/dflash/pd100-20261101/`.
+
+The new kernels make DFlash a decode speedup on this board. Fresh controlled
+runs use one warmup and two measured requests per case, 128 forced output
+tokens, context 8192, chunk 512, one sequence and prefix caching disabled.
+All rows below were measured on the new power connection, without competing
+compilation or inference. Values are mean decode tokens/second:
+
+| MLC variant | 161-token chat | 448-token prompt | 1768-token prompt |
+|---|---:|---:|---:|
+| Previous plain | 20.60 | 17.80 | 15.68 |
+| Native matrices, plain | 23.24 | 19.63 | 17.18 |
+| Previous DFlash, two draft tokens | 14.24 | 13.81 | 12.69 |
+| Native matrices, DFlash, attention disabled | 25.29 | 21.57 | 19.75 |
+| Native matrices + attention, DFlash | **31.59** | **33.42** | **31.08** |
+
+Chat verification falls from **118.24 to 45.99 ms/round**; drafting falls from
+21.03 to 15.75 ms. Mean output per round slightly decreases, 1.984 to 1.954,
+so increased acceptance does not explain the 2.22x throughput gain. The first
+128 chat output tokens match the previous DFlash run. Native plain decoding
+produces different wording, demonstrating that these arithmetic paths are not
+bit-identical even with the same checkpoint. Attention on/off produces identical
+output text in all three cases, although small numerical differences change
+draft acceptance by about one round per request.
+
+Prefill improves modestly: **218.33 / 271.95 / 144.14 tok/s** for native DFlash,
+versus 202.88 / 263.01 / 141.05 previously. The corresponding new request wall
+times are 4.76 / 5.45 / 16.36 seconds. The 1768-token prompt still spends about
+12.3 seconds before its first token. Forced continuations after EOS are useful
+for timing but are not representative natural answers or an agent-quality test.
+
+A fresh llama.cpp+DFlash F16 control uses the same prompt text, 128 output
+tokens, one warmup/two repeats, no prompt cache and context 8192. It uses
+Q4_K_M rather than MLC q4f16_1 plus Q8 activations, and its tokenizer counts
+168 / 454 / 1774 input tokens rather than 161 / 448 / 1768:
+
+| Case | MLC prefill tok/s | llama prefill tok/s | MLC decode tok/s | llama decode tok/s | MLC wall seconds | llama wall seconds |
+|---|---:|---:|---:|---:|---:|---:|
+| Chat | 218.33 | 189.90 | 31.59 | 26.80 | 4.76 | 5.63 |
+| Medium | 271.95 | 316.46 | 33.42 | 25.09 | 5.45 | 6.51 |
+| Long | 144.14 | 341.88 | 31.08 | 24.37 | 16.36 | 10.43 |
+
+MLC now wins decode in these cases and the short/medium complete requests.
+llama.cpp still wins the long request because of prefill. This is a practical
+engine comparison with different quantization/tokenization, not a controlled
+same-numerics accuracy comparison. The old 24.5 tok/s llama figure used a full
+natural answer; the fresh 128-token control is the appropriate comparison here.
+The experimental MLC path still requires prefix caching disabled and is tested
+at one concurrent sequence. The existing llama.cpp launcher remains available;
+no persistent service was changed.
+
+The new draft-length sweep gives 27.36 / 31.59 / 32.35 tok/s on chat for
+one / two / three draft tokens. Three drafts fall to 27.40 / 29.69 tok/s on
+the 448 / 1768 cases, below two drafts. Keep **two draft tokens** as the general
+setting; three is only a small chat-specific win in this sample.
+
+Natural-stop checks with native plain, two-token and three-token DFlash return `391` for
+the arithmetic prompt and `Done` for the long prompt. Their complete design-note
+answers contain the requested three summary points and two additional risks,
+but differ in wording and length (186 / 199 / 216 generated tokens). These are
+functional smoke checks; the old and new arithmetic are not accuracy-equivalent
+by construction, and no broad quality/perplexity benchmark has been run.
+
+Two opt-in compilation flags add CUDA 11.4/sm_72 kernels:
+
+- `MLC_XAVIER_Q4=1` quantizes activations to signed Q8 in groups of 32 and uses
+  DP4A against the existing q4f16_1 checkpoint layout. A warp processes one
+  output row for one token, or eight output rows for two through four tokens,
+  sharing weight loads across the token batch. Accumulation is FP32. This
+  replaces small-batch linear layers and the shared vocabulary projection;
+  large prefill matrix multiplications retain the existing cuBLAS path.
+- `MLC_XAVIER_ATTN=1` wraps the cache's paged-prefill callbacks for batches of
+  one through four queries. Each query/head gets its own block. Local heads
+  compute their actual 256 dimensions inside the existing 512-wide cache;
+  global heads compute all 512. Larger batches call the original TIR kernel.
+  Set `MLC_XAVIER_ATTN_OFF=1` **before engine creation** to disable this wrapper
+  at runtime, allowing an attention ablation with the same model library.
+
+The original single-token cache-decode callback is not replaced. The attention
+change primarily accelerates verification; it does not promise faster large
+prefill or ordinary one-token attention. The matrix path also benefits plain
+decoding and the draft's shared target vocabulary head.
+
+The cache layout, checkpoint, and tokenizer are unchanged. The Q8 activation
+path changes arithmetic and is **not bit-identical to the old target**. Random
+component checks found approximately 0.5–0.6% relative RMS error against an
+independent FP32 dot product of the original FP16-dequantized weights. This is
+not a perplexity or agent-quality evaluation. The supported experiment is
+greedy, one sequence, at most three draft tokens; the native linear entry point
+rejects batches outside one through four rows.
+
+Standalone matrix timings (including activation quantization and launch overhead):
+
+| Matrix, output × input | One token | Three tokens |
+|---|---:|---:|
+| FFN gate/up, 20480 × 2560 | 0.287 ms | 0.339 ms |
+| FFN down, 2560 × 10240 | 0.166 ms | 0.174 ms |
+| Vocabulary, 262144 × 2560 | 3.647 ms | 4.208 ms |
+
+These demonstrate much better amortization across verification tokens, but do
+not measure DRAM traffic or establish end-to-end throughput by themselves.
+
+The attention tests compare outputs and base-2 log-sum-exp against both TVM
+and NumPy, covering local/global attention, causal/noncausal masks, shuffled
+pages, nonzero cache offsets/sinks, empty context, and the larger-batch fallback.
+All 18 cases passed with maximum observed output differences at most 3.1e-5. Local
+three-query attention at 448 cached tokens measured 1.044 ms with TIR versus
+0.200 ms with the native callback. These are isolated component timings.
+The cache already bounds normal local-layer history; the 1768-token local
+component fixture deliberately stresses the mask and does not represent
+normal retained local-cache length.
+
+`tests/python/op/test_xavier_q4.py` exercises the Relax/FFI boundary, scratch
+planning, FP16/FP32 outputs, tail rows and zero inputs. The compiler uses a
+local external-module attachment pass that copies TVM's immutable attribute
+array before adding native modules; the pinned upstream pass incorrectly
+calls `append` directly on that array. A separate cache test compiles, exports,
+reloads and instantiates the wrapped cache through the actual Relax VM. The
+full model build subsequently completed successfully.
+
+Repeated token limits 1, 2, 3 and 17 pass with both two- and three-token
+DFlash, including decode accounting equal to completion tokens minus one.
+The final CUPTI diagnostic completes with zero dropped records. Both old and
+new 32-token chat traces contain 17 rounds:
+
+| GPU work per round | Previous | Native |
+|---|---:|---:|
+| Target quantized linear layers, excluding vocabulary | 74.38 ms | 28.13 ms |
+| Target vocabulary projection | 14.47 ms | 4.28 ms |
+| Draft vocabulary projection | 9.81 ms | 4.28 ms |
+| Target attention, paged plus ragged | 18.22 ms | 4.77 ms |
+| Activation quantization | — | 1.16 ms |
+| All recorded GPU kernels | 133.11 ms | 59.59 ms |
+
+The native linear row combines FFN and other projections because they share a
+kernel symbol. Vocabulary softcap operations, previously fused into the old
+projection kernel, become separate small kernels. Instrumented GPU sums are
+not wall-clock verification latency or throughput. Sources are the two trace
+CSVs and `profile-comparison.json` in the archived evidence.
+
+All final monitored runs exit successfully. Across the full build, comparison,
+validation and llama control, CPU temperature peaks at 59 C and GPU at 65 C
+(the MLC comparison peaks at 62.5 C GPU). No OC IRQ increment, current alarm,
+or monitor stop is observed. Available memory stays above 18,726 MiB. Peak
+summed monitored rails are 40.38 W and the lowest GPU supply sample is 19.616 V.
+These are slow on-board samples, not wall power or proof of the negotiated PD
+limit. The board remains up, MAXN and nvfancontrol remain active, and all test
+processes have stopped. The new port completes the workload successfully; it
+does not establish what caused the earlier unclean shutdown.
+
+Build with the existing prepared weights/runtime:
+
+```bash
+cd ~/Workspaces/mlc-dflash-work
+bash scripts/build_xavier_kernels.sh
+# Output: dist/libs/target-dflash-dp4a-attn-sm72.so
+# Optional separate matrix-only build: bash scripts/build_xavier_kernels.sh --q4-only
+
+source ~/Workspaces/mlc-jp5/env.sh
+export PYTHONPATH="$PWD/python" MLC_LIBRARY_PATH="$PWD/build"
+python scripts/bench_xavier_dflash.py --draft-tokens 2 \
+  --target-lib dist/libs/target-dflash-dp4a-attn-sm72.so \
+  --cases chat,448,1768 --tokens 128 --warmups 1 --repeats 2 \
+  --output logs/native-draft2.json
+MLC_XAVIER_ATTN_OFF=1 python scripts/bench_xavier_dflash.py --draft-tokens 2 \
+  --target-lib dist/libs/target-dflash-dp4a-attn-sm72.so \
+  --cases chat,448,1768 --tokens 128 --warmups 1 --repeats 2 \
+  --output logs/matrix-only-draft2.json
+# Fresh cross-engine control; starts and stops its own localhost server.
+python scripts/bench_xavier_llama.py --output logs/llama-control.json
+```
+
+## Prior controlled results, before the native kernels
 
 **The completed DFlash port is slower than optimized plain MLC on Xavier.**
 After the board restarted, the runtime was rebuilt and the final target library

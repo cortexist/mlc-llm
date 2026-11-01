@@ -15,6 +15,7 @@ from mlc_llm.support import logging
 
 from .attach_cuda_graph_alloc_init_func import AttachCUDAGraphAllocInitFunc
 from .attach_embedding_allocator import AttachAllocEmbeddingTensorFunc
+from .attach_external_modules import AttachExternModules
 from .attach_logit_processor import AttachLogitProcessFunc
 from .attach_sampler import AttachGPUSamplingFunc
 from .attach_softmax_with_temperature import AttachSoftmaxWithTemperature
@@ -201,7 +202,7 @@ def _mlc_llm_pipeline(
                 tvm.relax.transform.VMShapeLower(),
                 tvm.relax.transform.AttachGlobalSymbol(),
                 _LogProgress("Compiling external modules"),
-                tvm.relax.transform.AttachExternModules(ext_mods),
+                AttachExternModules(ext_mods),
                 _LogProgress("Compilation complete! Exporting to disk"),
             ]
         )

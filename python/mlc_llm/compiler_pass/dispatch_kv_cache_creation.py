@@ -1,6 +1,7 @@
 """A pass that rewrites KV cache creation functions in IRModule."""
 
 import json
+import os
 from typing import Any, Dict, List  # noqa: UP035
 
 import tvm_ffi
@@ -186,7 +187,24 @@ class DispatchKVCacheCreation:
             ],
         ):
             cache = kv_cache.TIRPagedKVCache(target=self.target, **kwargs)
-            bb.emit_func_output(cache._expr)
+            creation = cache._expr
+            if os.environ.get("MLC_XAVIER_ATTN") == "1":
+                from mlc_llm.op.xavier_attention import source_module, wrap_creation
+
+                if (
+                    self.target.kind.name != "cuda"
+                    or self.target.attrs.get("arch") != "sm_72"
+                    or kwargs["qk_head_dim"] != 512
+                    or kwargs["v_head_dim"] != 512
+                    or kwargs["num_attention_heads"] != 8
+                    or kwargs["num_key_value_heads"] != 2
+                    or kwargs["layer_sliding_window_size"] != 512
+                    or "mha_sliding" not in kwargs["attn_kind"]
+                ):
+                    raise ValueError("MLC_XAVIER_ATTN requires the tested Gemma4 E4B cache layout")
+                creation = wrap_creation(creation, bb.lookup_binding)
+                cache.extern_mods.append(source_module().load())
+            bb.emit_func_output(creation)
 
         return cache.extern_mods
 
