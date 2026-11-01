@@ -51,6 +51,33 @@ two proposals (`spec_draft_length=3`), `hybrid` prefill, one active sequence,
 requests. The service restarts on failure, with a bounded restart rate.
 Nginx, MLC and tailscaled are enabled at boot.
 
+Generation defaults to `temperature: 0`. Explicit nonzero temperatures or
+`n` values other than 1 return HTTP 400: the experimental Xavier DFlash
+sampler is qualified for greedy, single-output requests. Non-greedy sampling
+can otherwise terminate its background worker.
+
+### Pi on nowhere
+
+`~/.pi/agent/models.json` registers `cerebellum/nemotron`, reads the API key
+from the private credential file, and declares the 8192-token context and
+1024-token output limit. `~/.pi/agent/bin/pi-cerebellum` selects it and loads
+the local CA through `NODE_EXTRA_CA_CERTS` before Node starts:
+
+```bash
+pi-cerebellum
+# Or select the provider directly:
+NODE_EXTRA_CA_CERTS="$HOME/LocalAuthority/local-ca.crt" \
+  pi --provider cerebellum --model nemotron --thinking off --no-tools
+```
+
+Pi uses `openai-completions`, bearer authentication, `max_tokens`, system-role
+messages and greedy sampling. Its per-model compaction settings reserve 1536
+tokens and keep 2048 recent tokens. Existing provider/default settings are
+preserved. The current MLC protocol rejects assistant `tool_calls` messages,
+so this launcher runs Pi in chat mode with `--no-tools`. Coding-agent tool
+round-trips need additional backend support. A Pi print-mode request returned
+`391` through this configuration with TLS verification enabled.
+
 ```bash
 ssh cerebellum 'sudo systemctl status mlc-nemotron nginx tailscaled'
 ssh cerebellum 'sudo journalctl -u mlc-nemotron -f'

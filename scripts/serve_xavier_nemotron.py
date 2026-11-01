@@ -1,5 +1,6 @@
 """Serve the validated Xavier Nemotron/DFlash configuration on loopback."""
 
+import json
 import os
 from pathlib import Path
 
@@ -12,6 +13,54 @@ from mlc_llm.protocol import error_protocol
 from mlc_llm.serve import AsyncMLCEngine, EngineConfig
 from mlc_llm.serve.entrypoints import openai_entrypoints
 from mlc_llm.serve.server import ServerContext
+
+
+class GreedyOnlyMiddleware:
+    """Keep requests within the validated single-output Xavier DFlash sampler."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if (
+            scope["type"] != "http"
+            or scope.get("method") != "POST"
+            or scope.get("path") not in ("/v1/chat/completions", "/v1/completions")
+        ):
+            return await self.app(scope, receive, send)
+        request = fastapi.Request(scope, receive)
+        body = await request.body()
+        try:
+            payload = json.loads(body)
+        except (ValueError, UnicodeError):
+            payload = None
+        if isinstance(payload, dict):
+            if payload.get("temperature") not in (None, 0) or payload.get("n", 1) != 1:
+                response = fastapi.responses.JSONResponse(
+                    {
+                        "error": {
+                            "message": "This Xavier DFlash service supports temperature=0 and n=1.",
+                            "type": "invalid_request_error",
+                        }
+                    },
+                    status_code=400,
+                )
+                return await response(scope, receive, send)
+            payload["temperature"] = 0
+            body = json.dumps(payload).encode()
+            scope = dict(scope)
+            scope["headers"] = [(k, v) for k, v in scope["headers"] if k != b"content-length"]
+        pending = True
+
+        async def replay():
+            nonlocal pending
+            if pending:
+                pending = False
+                return {"type": "http.request", "body": body, "more_body": False}
+            return await receive()
+
+        return await self.app(scope, replay, send)
+
 
 root = Path(__file__).resolve().parents[1]
 if not Path(mlc_llm.__file__).resolve().is_relative_to(root / "python"):
@@ -52,6 +101,7 @@ with ServerContext() as context:
     context.add_model("nemotron", engine)
     context.api_key = key
     app = fastapi.FastAPI(title="Cerebellum Nemotron API", docs_url=None, redoc_url=None)
+    app.add_middleware(GreedyOnlyMiddleware)
     app.include_router(openai_entrypoints.app)
     app.exception_handler(error_protocol.BadRequestError)(error_protocol.bad_request_error_handler)
 
