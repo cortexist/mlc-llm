@@ -1,6 +1,6 @@
 # MLC-LLM for Jetson AGX Xavier
 
-This fork runs **NVIDIA Nemotron 3.5 Bolt E4B** on a **Jetson AGX Xavier 32 GB**
+This fork runs **NVIDIA Nemotron 3.5 Bolt E4B** on **cerebellum**, a **Jetson AGX Xavier 32 GB**
 using JetPack 5 / CUDA 11.4. It adds DFlash speculative decoding and kernels
 suited to Xavier's Volta GPU. The fastest measured configuration reaches
 **395 tok/s prefill at 448 tokens**, **279 tok/s at 1,768 tokens**, and roughly
