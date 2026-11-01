@@ -1,0 +1,324 @@
+{
+  "date": "2026-11-01",
+  "device": "cerebellum / Jetson AGX Xavier 32GB",
+  "jetpack": "5.1.8",
+  "cuda": "11.4",
+  "fan_profile": "cool",
+  "endpoint": "https://cerebellum.lan/v1",
+  "models": {
+    "nemotron": {
+      "decoder": "DFlash",
+      "context": 8192,
+      "tools": true,
+      "stream": "incremental chat, buffered tools",
+      "accepted_aliases": [
+        "nemotron:e4b"
+      ]
+    },
+    "gemma4-12b": {
+      "target": "QAT Heretic / q4f16_1",
+      "assistant": "original Unified QAT / q0f16",
+      "decoder": "MTP prototype, two proposals",
+      "context": 1024,
+      "tools": false,
+      "stream": "buffered SSE"
+    }
+  },
+  "topology": "single process, both target/assistant pairs resident, one shared FIFO generation queue",
+  "startup_order": "12B MTP loaded and warmed first, then Nemotron",
+  "startup_observation": "Nemotron-first restart failed a late 1 GiB NvMap allocation despite available RAM; revised startup order passed.",
+  "cpu_tests": {
+    "queue_budget_cancellation": 4,
+    "gemma4_tools": 7,
+    "passed": true
+  },
+  "memory": {
+    "scope": "whole device, MiB; short functional checks, not capacity qualification",
+    "initial_http_sample_peak_used_mib": 18803,
+    "initial_http_min_available_mib": 11894,
+    "final_snapshot_used_mib": 18630,
+    "final_snapshot_available_mib": 11978,
+    "final_swap_used_mib": 5
+  },
+  "https_checks": [
+    {
+      "name": "health",
+      "elapsed_s": 0.02674997691065073,
+      "model": "nemotron",
+      "queue": {
+        "active_model": null,
+        "waiting": 0,
+        "completed": 0
+      }
+    },
+    {
+      "name": "models",
+      "elapsed_s": 0.06259837397374213
+    },
+    {
+      "name": "alternate-nemotron",
+      "elapsed_s": 1.1443096719449386,
+      "queue_wait_ms": 0,
+      "model": "nemotron",
+      "answer": "391",
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 25,
+        "completion_tokens": 5,
+        "total_tokens": 30,
+        "extra": null
+      }
+    },
+    {
+      "name": "alternate-gemma4-12b",
+      "elapsed_s": 1.2166862409794703,
+      "queue_wait_ms": 0,
+      "model": "gemma4-12b",
+      "answer": "391",
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 29,
+        "completion_tokens": 4,
+        "total_tokens": 33,
+        "extra": {
+          "decode_tokens_per_s": 22.873767598554462,
+          "ttft_s": 1.0572201699997095,
+          "elapsed_s": 1.188374776999808,
+          "mtp_accepted": 2,
+          "mtp_proposed": 2
+        }
+      }
+    },
+    {
+      "name": "alternate-nemotron",
+      "elapsed_s": 0.47900859999936074,
+      "queue_wait_ms": 0,
+      "model": "nemotron",
+      "answer": "42",
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 23,
+        "completion_tokens": 4,
+        "total_tokens": 27,
+        "extra": null
+      }
+    },
+    {
+      "name": "alternate-gemma4-12b",
+      "elapsed_s": 1.2049671199638397,
+      "queue_wait_ms": 0,
+      "model": "gemma4-12b",
+      "answer": "121",
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 29,
+        "completion_tokens": 4,
+        "total_tokens": 33,
+        "extra": {
+          "decode_tokens_per_s": 23.56043836741623,
+          "ttft_s": 1.0531948140005625,
+          "elapsed_s": 1.1805269100004807,
+          "mtp_accepted": 2,
+          "mtp_proposed": 2
+        }
+      }
+    },
+    {
+      "name": "stream-gemma4-12b",
+      "elapsed_s": 1.2110497700050473,
+      "queue_wait_ms": 0,
+      "stream_text": "391"
+    },
+    {
+      "name": "stream-nemotron",
+      "elapsed_s": 0.5340724129928276,
+      "queue_wait_ms": 0,
+      "stream_text": "391"
+    },
+    {
+      "name": "unauthorized",
+      "status": 401
+    },
+    {
+      "name": "unknown-model",
+      "status": 404
+    },
+    {
+      "name": "context-limit",
+      "status": 400
+    },
+    {
+      "name": "non-greedy",
+      "status": 400
+    },
+    {
+      "name": "concurrent-health",
+      "elapsed_s": 0.017509319935925305,
+      "model": "nemotron",
+      "queue": {
+        "active_model": "nemotron",
+        "waiting": 1,
+        "completed": 9
+      }
+    },
+    {
+      "name": "concurrent-nemotron",
+      "elapsed_s": 1.3342793120536953,
+      "queue_wait_ms": 0,
+      "stream_text": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n"
+    },
+    {
+      "name": "concurrent-gemma4",
+      "elapsed_s": 2.023975796997547,
+      "queue_wait_ms": 813,
+      "model": "gemma4-12b",
+      "answer": "391",
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 29,
+        "completion_tokens": 4,
+        "total_tokens": 33,
+        "extra": {
+          "decode_tokens_per_s": 23.095892621891267,
+          "ttft_s": 1.0549685699998008,
+          "elapsed_s": 1.1848617959994954,
+          "mtp_accepted": 2,
+          "mtp_proposed": 2
+        }
+      }
+    },
+    {
+      "name": "after-cancelled-mtp-stream",
+      "elapsed_s": 3.0527837509289384,
+      "queue_wait_ms": 2429,
+      "model": "nemotron",
+      "answer": "391",
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 25,
+        "completion_tokens": 5,
+        "total_tokens": 30,
+        "extra": null
+      }
+    },
+    {
+      "name": "final-health",
+      "elapsed_s": 0.019499657908454537,
+      "model": "nemotron",
+      "queue": {
+        "active_model": null,
+        "waiting": 0,
+        "completed": 13
+      }
+    },
+    {
+      "name": "final-source-nemotron",
+      "elapsed_s": 1.1125602760585025,
+      "queue_wait_ms": 0,
+      "model": "nemotron",
+      "answer": "391",
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 25,
+        "completion_tokens": 5,
+        "total_tokens": 30,
+        "extra": null
+      }
+    },
+    {
+      "name": "final-source-gemma4-12b",
+      "elapsed_s": 1.4332948619266972,
+      "queue_wait_ms": 0,
+      "model": "gemma4-12b",
+      "answer": "391",
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 29,
+        "completion_tokens": 4,
+        "total_tokens": 33,
+        "extra": {
+          "decode_tokens_per_s": 21.484839609691008,
+          "ttft_s": 1.0632751849998385,
+          "elapsed_s": 1.2029085289996146,
+          "mtp_accepted": 2,
+          "mtp_proposed": 2
+        }
+      }
+    },
+    {
+      "name": "chunked-long-prompt",
+      "elapsed_s": 7.323817947995849,
+      "queue_wait_ms": 0,
+      "model": "gemma4-12b",
+      "answer": "391",
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 623,
+        "completion_tokens": 4,
+        "total_tokens": 627,
+        "extra": {
+          "decode_tokens_per_s": 13.019982457144765,
+          "ttft_s": 7.066848126999503,
+          "elapsed_s": 7.297263183999348,
+          "mtp_accepted": 2,
+          "mtp_proposed": 2
+        }
+      }
+    },
+    {
+      "name": "nemotron-tools",
+      "elapsed_s": 1.1527646689210087,
+      "queue_wait_ms": 0,
+      "model": "nemotron",
+      "answer": null,
+      "finish_reason": "tool_calls",
+      "tool_names": [
+        "get_weather"
+      ],
+      "usage": {
+        "prompt_tokens": 69,
+        "completion_tokens": 15,
+        "total_tokens": 84
+      }
+    },
+    {
+      "name": "final-health",
+      "elapsed_s": 0.017682815087027848,
+      "model": "nemotron",
+      "queue": {
+        "active_model": null,
+        "waiting": 0,
+        "completed": 4
+      }
+    }
+  ],
+  "restart_checks": [
+    {
+      "name": "after-restart-nemotron:e4b",
+      "elapsed_s": 1.1316097970120609,
+      "queue_wait_ms": "0"
+    },
+    {
+      "name": "after-restart-gemma4-12b",
+      "elapsed_s": 1.3151397369801998,
+      "queue_wait_ms": "0"
+    },
+    {
+      "name": "after-restart-nemotron",
+      "elapsed_s": 0.7164119239896536,
+      "queue_wait_ms": "0"
+    },
+    {
+      "name": "models",
+      "elapsed_s": 0.017962154000997543,
+      "queue_wait_ms": null
+    },
+    {
+      "name": "health",
+      "elapsed_s": 0.018118020030669868,
+      "queue_wait_ms": null
+    }
+  ],
+  "restart_passed_with_pi_alias": true,
+  "startup_order_restart_successes": 2
+}

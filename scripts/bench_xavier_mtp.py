@@ -63,13 +63,24 @@ class Trial:
     def run(self, prompt, count, drafts, ignore_eos=False):
         if not 0 <= drafts <= 2 or count < 1:
             raise ValueError("Use 0..2 draft tokens and a positive output limit")
+        if not prompt:
+            raise ValueError("A nonempty tokenized prompt is required")
         if len(prompt) + count + drafts > 1024:
             raise ValueError("Prototype context must fit 1024 tokens including verification")
         self.builtin("clear")(self.cache)
         self.builtin("add_sequence")(self.cache, 0)
         self.device.sync()
         start = time.perf_counter()
-        logits, hidden, *states = self.forward(prompt, prefill=True)
+        # The target's compiled seq_len bound is 512, even when the full
+        # request fits the 1024-token context. Preserve shared KV across chunks.
+        states = None
+        for offset in range(0, len(prompt), 512):
+            logits, hidden, *delta = self.forward(prompt[offset : offset + 512], prefill=True)
+            states = (
+                delta
+                if states is None
+                else [np.concatenate([a, b], axis=1) for a, b in zip(states, delta)]
+            )
         frontier = int(logits.reshape(-1, logits.shape[-1])[-1].argmax())
         hidden = hidden[:, -1:, :]
         output = [frontier]

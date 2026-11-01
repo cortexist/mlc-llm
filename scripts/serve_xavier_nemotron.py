@@ -5,16 +5,19 @@ import os
 from pathlib import Path
 
 import fastapi
+import mlc_llm
 import uvicorn
 from gemma4_tools import Gemma4ToolAdapter
-
-import mlc_llm
 from mlc_llm.base import _LIB_PATH
 from mlc_llm.protocol import error_protocol
-from mlc_llm.protocol.openai_api_protocol import ChatCompletionRequest
+from mlc_llm.protocol.openai_api_protocol import (
+    ChatCompletionRequest,
+    CompletionRequest,
+)
 from mlc_llm.serve import AsyncMLCEngine, EngineConfig
 from mlc_llm.serve.entrypoints import openai_entrypoints
 from mlc_llm.serve.server import ServerContext
+from xavier_serve_queue import GenerationQueue, SharedGenerationQueue
 
 
 class GreedyOnlyMiddleware:
@@ -41,7 +44,7 @@ class GreedyOnlyMiddleware:
                 response = fastapi.responses.JSONResponse(
                     {
                         "error": {
-                            "message": "This Xavier DFlash service supports temperature=0 and n=1.",
+                            "message": "This Xavier service supports temperature=0 and n=1.",
                             "type": "invalid_request_error",
                         }
                     },
@@ -79,6 +82,13 @@ if variant != "baseline":
     receipt = install(variant)
 else:
     receipt = None
+mtp = None
+if os.environ.get("MLC_GEMMA4_MTP") == "1":
+    from gemma4_mtp_service import MTPChat
+
+    # Reserve/warm the larger target's workspace before the second engine's
+    # allocations. Xavier NvMap can reject a large late startup allocation.
+    mtp = MTPChat(root)
 engine = AsyncMLCEngine(
     str(root / "dist/target"),
     device="cuda",
@@ -105,25 +115,65 @@ tool_adapter = Gemma4ToolAdapter(
         "MLC_NEMOTRON_TOKENIZER", str(Path.home() / "Models/nemotron-3.5-Bolt-E4B-BF16")
     ),
 )
+queue = GenerationQueue()
 with ServerContext() as context:
     context.add_model("nemotron", engine)
     context.api_key = key
     app = fastapi.FastAPI(title="Cerebellum Nemotron API", docs_url=None, redoc_url=None)
     app.add_middleware(GreedyOnlyMiddleware)
+    app.add_middleware(SharedGenerationQueue, queue=queue, api_key=key)
 
     @app.post(
         "/v1/chat/completions", dependencies=[fastapi.Depends(openai_entrypoints.verify_api_key)]
     )
     async def chat(request: ChatCompletionRequest, raw_request: fastapi.Request):
+        if mtp is not None and request.model == mtp.model_id:
+            queue.active_model = mtp.model_id
+            return await mtp.handle(request)
+        if request.model not in (None, "nemotron", "nemotron:e4b"):
+            raise fastapi.HTTPException(404, "Unknown model; see /v1/models")
+        queue.active_model = "nemotron"
         if request.tools or any(m.tool_calls or m.role == "tool" for m in request.messages):
             return await tool_adapter.handle(request, raw_request)
         return await openai_entrypoints.request_chat_completion(request, raw_request)
+
+    @app.post("/v1/completions", dependencies=[fastapi.Depends(openai_entrypoints.verify_api_key)])
+    async def complete(request: CompletionRequest, raw_request: fastapi.Request):
+        if mtp is not None and request.model == mtp.model_id:
+            raise fastapi.HTTPException(400, "gemma4-12b supports /v1/chat/completions only")
+        if request.model not in (None, "nemotron", "nemotron:e4b"):
+            raise fastapi.HTTPException(404, "Unknown model; see /v1/models")
+        queue.active_model = "nemotron"
+        return await openai_entrypoints.request_completion(request, raw_request)
+
+    @app.get("/v1/models", dependencies=[fastapi.Depends(openai_entrypoints.verify_api_key)])
+    async def models():
+        entries = [dict(id="nemotron", object="model", owned_by="cerebellum", context_length=8192)]
+        if mtp is not None:
+            entries.append(
+                dict(
+                    id=mtp.model_id,
+                    object="model",
+                    owned_by="cerebellum",
+                    context_length=mtp.context_length,
+                )
+            )
+        return dict(object="list", data=entries)
 
     app.include_router(openai_entrypoints.app)
     app.exception_handler(error_protocol.BadRequestError)(error_protocol.bad_request_error_handler)
 
     @app.get("/healthz", include_in_schema=False)
     async def health():
-        return {"status": "ok", "model": "nemotron"}
+        return {
+            "status": "ok",
+            "model": "nemotron",
+            "models": ["nemotron"] + ([mtp.model_id] if mtp is not None else []),
+            "queue": queue.status(),
+        }
 
-    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info", access_log=False)
+    try:
+        uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info", access_log=False)
+    finally:
+        if mtp is not None:
+            mtp.pool.shutdown(wait=True)

@@ -1,8 +1,30 @@
-# Nemotron HTTPS service on cerebellum
+# Resident model HTTPS service on cerebellum
 
 The deployed OpenAI-compatible API is **`https://cerebellum.lan/v1`**, with
-model ID **`nemotron`**. `/healthz` reports readiness. Model listing and
+model IDs **`nemotron`** and **`gemma4-12b`**. `/healthz` reports readiness. Model listing and
 generation require `Authorization: Bearer <API key>`.
+
+Both targets and their assistants stay resident. Select the model in each
+chat request; switching does not unload/reload weights. One shared FIFO queue
+serializes complete generations across both models, including streaming and
+Nemotron tool calls. `X-Cerebellum-Queue-Wait-Ms` reports time spent waiting.
+The existing Pi default remains Nemotron.
+The existing `nemotron:e4b` client ID is also accepted as a Nemotron alias.
+
+| API model | Decoder | Context | Tools | Response streaming |
+|---|---|---:|---|---|
+| `nemotron` | DFlash | 8,192 | Yes | Incremental chat; buffered tool turns |
+| `gemma4-12b` | Official QAT MTP, two proposals | 1,024 | No | Buffered SSE with keepalives |
+
+The 12B route uses the Heretic target and the original Unified QAT assistant.
+It supports text-only `/v1/chat/completions`, greedy single-output generation,
+and reserves two context slots for verification. `max_tokens` must fit the
+remaining context; its default is the smaller of 128 or the available budget.
+Oversized inputs and unsupported tools, stop strings, penalties, logprobs,
+response constraints and debug settings return HTTP 400. Unknown model IDs
+return HTTP 404. This HTTP adapter uses the bounded direct-VM prototype;
+it does not add an `MLCEngine` MTP speculative mode. See
+[the MTP build and validation notes](../../docs/deploy/xavier_gemma4_mtp.md).
 
 ## Access from clients
 
@@ -32,7 +54,7 @@ curl -N --cacert ./local-ca.crt https://cerebellum.lan/v1/chat/completions \
 ```
 
 For an SDK or application, set its base URL to `https://cerebellum.lan/v1`,
-its model to `nemotron`, and its API key to the saved key. Configure its TLS
+its model to `nemotron` or `gemma4-12b`, and its API key to the saved key. Configure its TLS
 trust store with the local CA. An explicit tailnet connectivity test can use
 `curl --resolve cerebellum.lan:443:100.64.0.4` with the same CA and credentials.
 
@@ -50,6 +72,33 @@ two proposals (`spec_draft_length=3`), `hybrid` prefill, one active sequence,
 8K context and prefix caching disabled. Multiple HTTP clients can queue
 requests. The service restarts on failure, with a bounded restart rate.
 Nginx, MLC and tailscaled are enabled at boot.
+
+`mlc-nemotron.service.d/dual-model.conf` sets `MLC_GEMMA4_MTP=1`, enabling the
+second resident target/assistant and an arithmetic startup check. The API
+becomes ready after both models load. Startup loads and warms 12B first, then
+initializes Nemotron: a Nemotron-first restart encountered a late 1 GiB NvMap
+allocation failure despite available system RAM. The MTP VM is constructed and called on
+one dedicated thread; cancellation drains that worker before releasing the
+shared GPU queue. Its chat template comes from the original Heretic checkpoint,
+because MLC conversion omits `chat_template.jinja`.
+
+To install the optional second model after building the MTP artifacts, copy
+`scripts/gemma4_mtp_service.py`, `scripts/bench_xavier_mtp.py`,
+`scripts/xavier_serve_queue.py` and the updated `scripts/serve_xavier_nemotron.py`
+to the deployed checkout, then install the drop-in:
+
+```bash
+sudo install -d /etc/systemd/system/mlc-nemotron.service.d
+sudo install -m 644 deploy/cerebellum/dual-model.conf \
+  /etc/systemd/system/mlc-nemotron.service.d/dual-model.conf
+sudo systemctl daemon-reload
+sudo systemctl restart mlc-nemotron
+```
+
+For Nemotron-only operation, set `Environment=MLC_GEMMA4_MTP=0` in that drop-in,
+reload systemd and restart the service. Keep the shared-queue helper beside the
+serving script in either mode. No nginx, certificate, DNS or API-key change is
+needed when enabling/disabling the second model.
 
 Generation defaults to `temperature: 0`. Explicit nonzero temperatures or
 `n` values other than 1 return HTTP 400: the experimental Xavier DFlash
@@ -179,3 +228,17 @@ authenticated `/v1/models`, unauthorized HTTP 401, ordinary and streaming
 chat (`391`, three SSE events), two queued clients (`42` and `121`), and chat
 through the tailnet DNS name. TLS verification remains enabled throughout.
 These are deployment checks; hardware stability diagnosis remains deferred.
+
+The dual-resident trial on 2026-11-01 additionally verified alternating models
+without reloading, both JSON/SSE paths, unknown-model/context/sampling errors,
+cross-model queueing, a cancelled 12B stream followed by Nemotron, a 623-token
+12B prompt using chunked prefill, and a Nemotron `get_weather` tool call. Four
+queue/budget/cancellation CPU tests and the seven existing tool tests pass.
+During the initial HTTP checks, sampled total system RAM peaked at 18,803 MiB
+(18.36 GiB), with at least 11,894 MiB available. The final resident snapshot was
+18,630 MiB used / 11,978 MiB available, with 5 MiB of swap occupied. These are
+whole-device readings, not isolated worker memory, and short functional checks,
+not a sustained-load or maximum-context qualification. A second restart with
+12B-first warmup also passed, including the existing Pi model alias. Detailed local logs are
+under `nowhere:~/Workspaces/cerebellum-llm-bench/mlc-jp5/logs/dual-resident-20261101`;
+see the [saved summary](../../docs/benchmarks/xavier/dual-resident-summary.json).

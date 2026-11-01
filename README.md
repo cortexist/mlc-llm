@@ -81,8 +81,9 @@ history are in [the experiment record](docs/deploy/xavier_dflash.md).
 An experimental port of the official `Gemma4UnifiedAssistantForCausalLM` also
 supports native MTP trials with this target. See the
 [MTP implementation, validation and build instructions](docs/deploy/xavier_gemma4_mtp.md).
-It currently uses a greedy direct-VM controller with a 1K context limit;
-the HTTP service continues to run Nemotron.
+It currently uses a greedy direct-VM controller with a 1K context limit.
+The optional HTTP adapter keeps it resident alongside Nemotron and routes
+requests by model ID through one shared GPU queue.
 
 The fork also supports text generation from
 `gemma-4-12B-IT-QAT-Q4_0-unquantized-heretic`, converted from BF16 to MLC
@@ -115,7 +116,9 @@ compatibility investigation; these plain rates do not include speculative decodi
 - **Gemma4 support:** E4B/Nemotron with two KV heads, plus a text-only Unified
   12B port with mixed local/global KV head counts and global K=V projections.
 - **Native Unified MTP prototype:** official QAT assistant conversion, shared-KV
-  draft steps, greedy target verification and a reproducible direct-VM trial.
+  draft steps, greedy target verification, and an optional resident HTTP adapter.
+- **Resident model routing:** Nemotron and 12B + MTP share one authenticated
+  endpoint and a FIFO generation queue, including streaming/cancellation handling.
 - **Faster projections:** one-token GEMV specialization; FP16 dequantization +
   cuBLAS for large prefill; native DP4A/Q8-activation kernels for 1–4 rows.
 - **DFlash execution:** target feature extraction, GPU greedy selection, cached
@@ -252,10 +255,13 @@ limits. Keep compilation and GPU inference sequential.
 
 ## HTTPS serving on cerebellum
 
-The deployed API is **`https://cerebellum.lan/v1`**, model **`nemotron`**,
+The deployed API is **`https://cerebellum.lan/v1`**, with models **`nemotron`**
+and **`gemma4-12b`**,
 reachable from the LAN and the existing Headscale tailnet. It uses a
 certificate signed by the local CA, bearer authentication, streaming responses,
-and the optimized Nemotron/DFlash configuration. See the
+and resident Nemotron/DFlash plus the bounded 12B/MTP adapter. Requests share
+one GPU generation queue; 12B currently has a 1K context and text-only chat.
+See the
 [deployment and client instructions](deploy/cerebellum/README.md) for CA trust,
 credentials, service management and certificate renewal.
 

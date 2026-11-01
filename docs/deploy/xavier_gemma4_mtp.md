@@ -2,9 +2,10 @@
 
 The fork can convert and compile the original
 `Gemma4UnifiedAssistantForCausalLM` checkpoint, separately from DFlash.
-This is an experimental direct-VM driver, not an `MLCEngine` speculative mode
-or an HTTP serving option. Cerebellum's Nemotron service continues to use its
-existing DFlash path.
+This is an experimental direct-VM driver, not an `MLCEngine` speculative mode.
+An optional [HTTP adapter](../../deploy/cerebellum/README.md) serves it as
+`gemma4-12b` alongside resident Nemotron, with one shared generation queue.
+Nemotron continues to use its existing DFlash path.
 
 The tested pair is the local QAT assistant
 `~/Models/gemma-4-12B-IT-QAT-Q4_0-unquantized-assistant` (BF16 source, converted
@@ -25,6 +26,7 @@ the trial below measures this particular pairing.
 - New target exports return normalized hidden states and unpadded, unbroadcast
   KV deltas. Verification accepts the greedy matching prefix and rolls back
   rejected target-cache entries. The controller retains only committed deltas.
+  Prompt prefill uses chunks of at most 512, preserving shared KV between chunks.
 - One sequence, greedy generation, one or two proposals, total context at most
   1,024 tokens. Longer contexts and sliding-window eviction are not implemented.
 - Assistant KV inputs are padded to 1,024 and masked by valid length. Explicit
@@ -32,7 +34,7 @@ the trial below measures this particular pairing.
   fixed buffers avoid a dynamic stack allocation limitation in CUDA codegen.
 - The Python controller copies KV, hidden states, logits and embeddings through
   CPU memory. Reported times include this overhead. Persistent GPU buffers,
-  cache views, device sampling and engine integration remain future work.
+  cache views, device sampling and native engine integration remain future work.
 
 ## Validation
 
