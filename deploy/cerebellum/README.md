@@ -58,7 +58,7 @@ can otherwise terminate its background worker.
 
 ### Pi on nowhere
 
-`~/.pi/agent/models.json` registers `cerebellum/nemotron`, reads the API key
+`~/.pi/agent/models.json` registers `cerebellum/nemotron:e4b`, reads the API key
 from the private credential file, and declares the 8192-token context and
 1024-token output limit. `~/.pi/agent/bin/pi-cerebellum` selects it and loads
 the system trust store through `NODE_USE_SYSTEM_CA=1` before Node starts:
@@ -67,7 +67,7 @@ the system trust store through `NODE_USE_SYSTEM_CA=1` before Node starts:
 pi-cerebellum
 # Or select the provider directly:
 NODE_USE_SYSTEM_CA=1 \
-  pi --provider cerebellum --model nemotron --thinking off --no-tools
+  pi --provider cerebellum --model nemotron:e4b --thinking off --no-tools
 ```
 
 On nowhere, the root is installed at
@@ -79,8 +79,11 @@ applications maintain independent trust stores and need their own configuration.
 
 Pi uses `openai-completions`, bearer authentication, `max_tokens`, system-role
 messages and greedy sampling. Its per-model compaction settings reserve 1536
-tokens and keep 2048 recent tokens. Existing provider/default settings are
-preserved. The current MLC protocol rejects assistant `tool_calls` messages,
+tokens and keep 2048 recent tokens. The default provider is `cerebellum` and the default client model is
+`nemotron:e4b`. The `pi-llama-cpp` package remains installed with
+`extensions: []`, suppressing its independent localhost:9931 startup probe;
+re-enable it through `pi config` when using that integration. The ordinary Pi
+launcher defaults `NODE_USE_SYSTEM_CA=1` for existing terminal environments. The current MLC protocol rejects assistant `tool_calls` messages,
 so this launcher runs Pi in chat mode with `--no-tools`. Coding-agent tool
 round-trips need additional backend support. A Pi print-mode request returned
 `391` through this configuration with TLS verification enabled.
