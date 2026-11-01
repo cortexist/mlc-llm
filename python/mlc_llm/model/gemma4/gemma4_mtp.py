@@ -1,7 +1,7 @@
 """Official Gemma4 Unified MTP assistant and explicit-state target exports.
 
 The first MTP driver uses these compiled programs directly. It is restricted to
-one sequence, greedy generation, and contexts no longer than the SWA window.
+    one sequence and greedy generation. Local attention masks the shared history.
 Assistant KV inputs are frozen throughout a draft round and position is fixed.
 """
 
@@ -50,7 +50,7 @@ class Gemma4UnifiedAssistantConfig(ConfigBase):
     text_config: dict | AssistantTextConfig = dataclasses.field(default_factory=dict)
     backbone_hidden_size: int = 3840
     use_ordered_embeddings: bool = False
-    context_window_size: int = 1024
+    context_window_size: int = 4096
     prefill_chunk_size: int = 512
     max_batch_size: int = 1
     tensor_parallel_shards: int = 1
@@ -63,8 +63,8 @@ class Gemma4UnifiedAssistantConfig(ConfigBase):
             raise ValueError("Ordered/centroid heads are not implemented by this Unified port")
         if self.tensor_parallel_shards != 1 or self.max_batch_size != 1:
             raise ValueError("The MTP prototype supports one device and one sequence")
-        if self.context_window_size > self.text_config.sliding_window:
-            raise ValueError("MTP prototype context must fit the assistant's sliding window")
+        if not 0 < self.context_window_size <= self.text_config.max_position_embeddings:
+            raise ValueError("Invalid MTP context window")
 
     @property
     def vocab_size(self):
@@ -73,6 +73,9 @@ class Gemma4UnifiedAssistantConfig(ConfigBase):
 
 class SharedAttention(nn.Module):
     def __init__(self, config, layer):
+        self.window = (
+            config.sliding_window if config.layer_types[layer] == "sliding_attention" else 0
+        )
         self.head_dim = config.head_dim_for_layer(layer)
         self.heads = config.num_attention_heads
         self.kv_heads = (
@@ -116,7 +119,9 @@ class SharedAttention(nn.Module):
             return te.compute(
                 scores.shape,
                 lambda b, h, g, s: tirx.if_then_else(
-                    s < length[0], scores[b, h, g, s], tirx.const(float("-inf"), scores.dtype)
+                    (s < length[0]) & (s >= length[0] - self.window - 1 if self.window else s >= 0),
+                    scores[b, h, g, s],
+                    tirx.const(float("-inf"), scores.dtype),
                 ),
                 name="mtp_context_mask",
             )

@@ -90,17 +90,17 @@ if os.environ.get("MLC_GEMMA4_MTP") == "1":
     # allocations. Xavier NvMap can reject a large late startup allocation.
     mtp = MTPChat(root)
 engine = AsyncMLCEngine(
-    str(root / "dist/target"),
+    str(root / "dist/target-16k"),
     device="cuda",
-    model_lib=str(root / "dist/libs/target-dflash-dp4a-attn-sm72.so"),
+    model_lib=str(root / "dist/libs/target-dflash-dp4a-attn-16k-sm72.so"),
     mode="interactive",
     engine_config=EngineConfig(
         additional_models=[
-            (str(root / "dist/draft"), str(root / "dist/libs/draft-cached-tc-sm72.so"))
+            (str(root / "dist/draft-16k"), str(root / "dist/libs/draft-cached-tc-16k-sm72.so"))
         ],
         max_num_sequence=1,
-        max_total_sequence_length=8192,
-        max_single_sequence_length=8192,
+        max_total_sequence_length=16384,
+        max_single_sequence_length=16384,
         prefill_chunk_size=512,
         prefix_cache_mode="disable",
         speculative_mode="dflash",
@@ -148,7 +148,7 @@ with ServerContext() as context:
 
     @app.get("/v1/models", dependencies=[fastapi.Depends(openai_entrypoints.verify_api_key)])
     async def models():
-        entries = [dict(id="nemotron", object="model", owned_by="cerebellum", context_length=8192)]
+        entries = [dict(id="nemotron", object="model", owned_by="cerebellum", context_length=16384)]
         if mtp is not None:
             entries.append(
                 dict(

@@ -9,13 +9,13 @@ from pathlib import Path
 
 import anyio
 import fastapi
-from gemma4_tools import ToolFormatError, parse_output
+from gemma4_tools import ToolFormatError, normalize_messages, parse_output
 from jinja2 import TemplateError
 
 
 class MTPChat:
     model_id = "gemma4-12b"
-    context_length = 1024
+    context_length = 4096
 
     def __init__(self, root):
         self.root = root
@@ -32,7 +32,7 @@ class MTPChat:
         from transformers import AutoTokenizer
 
         self.tokenizer = AutoTokenizer.from_pretrained(
-            self.root / "dist/gemma4-12b-mtp-target", local_files_only=True
+            self.root / "dist/gemma4-12b-mtp-target-4k", local_files_only=True
         )
         # MLC conversion copies tokenizer tables, but not chat_template.jinja.
         self.tokenizer.chat_template = (
@@ -46,14 +46,16 @@ class MTPChat:
             return_dict=False,
         )
         target = Program(
-            self.root / "dist/gemma4-12b-mtp-target",
-            self.root / "dist/libs/gemma4-12b-mtp-target-sm72.so",
+            self.root / "dist/gemma4-12b-mtp-target-4k",
+            self.root / "dist/libs/gemma4-12b-mtp-target-4k-sm72.so",
         )
         assistant = Program(
             Path.home() / "Models/gemma-4-12B-IT-QAT-Q4_0-unquantized-assistant-q0f16-MLC",
-            self.root / "dist/libs/gemma4-12b-mtp-assistant-sm72.so",
+            self.root / "dist/libs/gemma4-12b-mtp-assistant-4k-sm72.so",
         )
         self.trial = Trial(target, assistant)
+        if self.trial.context_length != self.context_length:
+            raise RuntimeError("MTP libraries do not match the advertised context capacity")
         result = self.trial.run(prompt, 16, 2)
         text = self.tokenizer.decode(result["tokens"])
         if "391" not in text:
@@ -74,12 +76,8 @@ class MTPChat:
     def prepare(self, request):
         if request.temperature not in (None, 0) or request.n != 1:
             raise ValueError("gemma4-12b supports temperature=0 and n=1")
-        if (
-            request.tools
-            or request.tool_choice not in (None, "none", "auto")
-            or any(m.role == "tool" or m.tool_calls for m in request.messages)
-        ):
-            raise ValueError("Tools are currently supported by nemotron only")
+        if request.tool_choice not in (None, "none", "auto"):
+            raise ValueError("gemma4-12b supports tool_choice auto or none")
         if (
             request.logprobs
             or request.response_format is not None
@@ -95,44 +93,39 @@ class MTPChat:
             )
         if not request.messages:
             raise ValueError("gemma4-12b requires text system/user/assistant messages")
-        messages = []
-        for message in request.messages:
-            content = message.content
-            if isinstance(content, list):
-                if any(
-                    p.get("type") != "text" or not isinstance(p.get("text"), str) for p in content
-                ):
-                    raise ValueError("gemma4-12b supports text content blocks only")
-                content = "\n".join(p["text"] for p in content)
-            if message.role not in ("system", "user", "assistant") or not isinstance(content, str):
-                raise ValueError("gemma4-12b requires text system/user/assistant messages")
-            messages.append(dict(role=message.role, content=content))
+        messages = normalize_messages([m.model_dump(exclude_none=True) for m in request.messages])
+        if any(m["role"] not in ("system", "user", "assistant", "tool") for m in messages):
+            raise ValueError("Unsupported message role")
+        tools = [t.model_dump(exclude_none=True) for t in request.tools or []]
+        if request.tool_choice == "none":
+            tools = []
         prompt = self.tokenizer.apply_chat_template(
             messages,
+            tools=tools,
             tokenize=True,
             add_generation_prompt=True,
             enable_thinking=False,
             return_dict=False,
         )
         remaining = self.context_length - len(prompt) - 2
-        limit = min(128, remaining) if request.max_tokens is None else request.max_tokens
+        limit = min(512, remaining) if request.max_tokens is None else request.max_tokens
         if limit < 1 or limit > remaining:
             raise ValueError(
-                f"gemma4-12b context is 1024 tokens; prompt uses {len(prompt)}, "
+                f"gemma4-12b context is {self.context_length} tokens; prompt uses {len(prompt)}, "
                 f"max_tokens must be 1..{max(0, remaining)} (2 verification slots)"
             )
-        return prompt, limit
+        return prompt, limit, {t["function"]["name"] for t in tools}
 
-    def generate(self, prompt, limit):
+    def generate(self, prompt, limit, allowed_names):
         result = self.trial.run(prompt, limit, 2)
         ids = result["tokens"]
         stopped = ids[-1] in {1, 50, 106}
         raw = self.tokenizer.decode(ids[:-1] if stopped else ids)
         try:
-            content, _ = parse_output(raw, set())
+            content, calls = parse_output(raw, allowed_names)
         except ToolFormatError:
             if not stopped and "<|channel>" in raw and "<channel|>" not in raw:
-                content = ""
+                content, calls = "", []
             else:
                 raise
         usage = dict(
@@ -148,7 +141,10 @@ class MTPChat:
             },
         )
         print(json.dumps({"event": "mtp_request", "model": self.model_id, **usage}), flush=True)
-        return content, "stop" if stopped else "length", usage
+        message = dict(role="assistant", content=content or None)
+        if calls:
+            message["tool_calls"] = calls
+        return message, "tool_calls" if calls else ("stop" if stopped else "length"), usage
 
     async def work(self, function, *args):
         future = asyncio.get_running_loop().run_in_executor(self.pool, function, *args)
@@ -163,7 +159,7 @@ class MTPChat:
 
     async def handle(self, request):
         try:
-            prompt, limit = await self.work(self.prepare, request)
+            prompt, limit, allowed_names = await self.work(self.prepare, request)
         except (ValueError, TypeError, TemplateError) as exc:
             raise fastapi.HTTPException(400, str(exc)) from exc
         request_id, created = "chatcmpl-" + uuid.uuid4().hex, int(time.time())
@@ -181,12 +177,17 @@ class MTPChat:
             return payload
 
         if not request.stream:
-            content, finish, usage = await self.work(self.generate, prompt, limit)
+            try:
+                message, finish, usage = await self.work(
+                    self.generate, prompt, limit, allowed_names
+                )
+            except ToolFormatError as exc:
+                raise fastapi.HTTPException(502, str(exc)) from exc
             return response(
                 [
                     dict(
                         index=0,
-                        message=dict(role="assistant", content=content),
+                        message=message,
                         finish_reason=finish,
                     )
                 ],
@@ -202,15 +203,22 @@ class MTPChat:
             return "data: " + json.dumps(response(choices, True, usage)) + "\n\n"
 
         async def stream():
-            task = asyncio.create_task(self.work(self.generate, prompt, limit))
+            task = asyncio.create_task(self.work(self.generate, prompt, limit, allowed_names))
             try:
                 yield event(dict(role="assistant", content=""))
                 while not task.done():
                     done, _ = await asyncio.wait({task}, timeout=5)
                     if not done:
                         yield ": generating\n\n"
-                content, finish, usage = task.result()
-                yield event(dict(content=content))
+                message, finish, usage = task.result()
+                delta = {}
+                if message["content"]:
+                    delta["content"] = message["content"]
+                if "tool_calls" in message:
+                    delta["tool_calls"] = [
+                        {"index": i, **call} for i, call in enumerate(message["tool_calls"])
+                    ]
+                yield event(delta)
                 yield event(finish=finish)
                 if request.stream_options and request.stream_options.include_usage:
                     yield event(usage=usage)

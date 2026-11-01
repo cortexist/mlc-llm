@@ -4,7 +4,7 @@ The fork can convert and compile the original
 `Gemma4UnifiedAssistantForCausalLM` checkpoint, separately from DFlash.
 This is an experimental direct-VM driver, not an `MLCEngine` speculative mode.
 An optional [HTTP adapter](../../deploy/cerebellum/README.md) serves it as
-`gemma4-12b` alongside resident Nemotron, with one shared generation queue.
+`gemma4-12b` alongside resident Nemotron, with one shared generation queue. The deployed contexts are 16K Nemotron and 4K 12B.
 Nemotron continues to use its existing DFlash path.
 
 The tested pair is the local QAT assistant
@@ -27,9 +27,10 @@ the trial below measures this particular pairing.
   KV deltas. Verification accepts the greedy matching prefix and rolls back
   rejected target-cache entries. The controller retains only committed deltas.
   Prompt prefill uses chunks of at most 512, preserving shared KV between chunks.
-- One sequence, greedy generation, one or two proposals, total context at most
-  1,024 tokens. Longer contexts and sliding-window eviction are not implemented.
-- Assistant KV inputs are padded to 1,024 and masked by valid length. Explicit
+- One sequence, greedy generation, one or two proposals, 4,096 total tokens.
+  Local assistant layers mask older shared KV using the reference sliding-window
+  rule; global layers retain the complete valid history.
+- Assistant KV inputs are padded to the compiled capacity (4,096 in deployment) and masked by valid length. Explicit
   attention reductions avoid CUDA 11.4 cuBLAS-Lt strided-batch dispatch errors;
   fixed buffers avoid a dynamic stack allocation limitation in CUDA codegen.
 - The Python controller copies KV, hidden states, logits and embeddings through
@@ -130,3 +131,24 @@ profile changed from `quiet` to `cool`; `pid` and `open_loop` were retained.
 The known power-supply issue remains deferred. Logs are retained in
 `~/Workspaces/cerebellum-llm-bench/mlc-jp5/logs/gemma4-mtp-20261101` on nowhere
 and `~/Workspaces/mlc-dflash-work/logs/gemma4-mtp-20261101` on cerebellum.
+
+
+## Extended context and tools
+
+The 16K / 4K deployment uses `scripts/build_xavier_contexts.sh`; existing source
+weights and converted shards are reused. The compiled assistant capacity can
+exceed its local attention window. The driver reads capacity from both library
+metadata records, retains absolute RoPE positions, masks local attention to the
+reference's recent window, and masks padding in all layers. Four recurrent CPU
+reference steps include a 1,100-token history; maximum logit errors are
+`2.91e-7`, `1.21e-6`, `4.54e-5`, `1.71e-4`. High-position differences reflect the
+FP32 inverse-frequency rounding already covered by the target RoPE test.
+
+The native Heretic checkpoint template declares tools and formats calls/results
+using the same Gemma4 markers as Nemotron. The HTTP adapter accepts OpenAI tool
+schemas and validated call/result histories, parses only complete declared
+calls, and emits OpenAI `tool_calls`/`finish_reason: tool_calls`. JSON arguments
+remain strings on the API; tool execution happens in the client. Auto/none
+choices are supported. Text and tool responses use buffered SSE with keepalives;
+malformed/incomplete/undeclared calls fail instead of exposing partial calls.
+See the deployment runbook for Pi setup and the measured context trial.

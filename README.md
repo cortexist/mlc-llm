@@ -81,7 +81,7 @@ history are in [the experiment record](docs/deploy/xavier_dflash.md).
 An experimental port of the official `Gemma4UnifiedAssistantForCausalLM` also
 supports native MTP trials with this target. See the
 [MTP implementation, validation and build instructions](docs/deploy/xavier_gemma4_mtp.md).
-It currently uses a greedy direct-VM controller with a 1K context limit.
+It currently uses a greedy direct-VM controller with a 4K deployed context and native tool calls.
 The optional HTTP adapter keeps it resident alongside Nemotron and routes
 requests by model ID through one shared GPU queue.
 
@@ -260,7 +260,7 @@ and **`gemma4-12b`**,
 reachable from the LAN and the existing Headscale tailnet. It uses a
 certificate signed by the local CA, bearer authentication, streaming responses,
 and resident Nemotron/DFlash plus the bounded 12B/MTP adapter. Requests share
-one GPU generation queue; 12B currently has a 1K context and text-only chat.
+one GPU generation queue; 12B currently has a 4K context and text/tool chat.
 See the
 [deployment and client instructions](deploy/cerebellum/README.md) for CA trust,
 credentials, service management and certificate renewal.

@@ -130,6 +130,7 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
 class BudgetTest(unittest.TestCase):
     def test_verification_slots_are_reserved_before_generation(self):
         service = MTPChat.__new__(MTPChat)
+        service.context_length = 1024
         service.tokenizer = SimpleNamespace(apply_chat_template=lambda *a, **kw: [2] * 1020)
         request = SimpleNamespace(
             temperature=0,
@@ -144,12 +145,49 @@ class BudgetTest(unittest.TestCase):
             stop=None,
             debug_config=None,
             max_tokens=3,
-            messages=[SimpleNamespace(role="user", content="hello", tool_calls=None)],
+            messages=[SimpleNamespace(model_dump=lambda **kw: dict(role="user", content="hello"))],
         )
         with self.assertRaisesRegex(ValueError, "2 verification slots"):
             service.prepare(request)
         request.max_tokens = 2
         self.assertEqual(service.prepare(request)[1], 2)
+
+    def test_native_mtp_call_becomes_complete_openai_call(self):
+        import json
+
+        service = MTPChat.__new__(MTPChat)
+        # Stop token 50 begins the tool response; retain the call's closing 49.
+        service.trial = SimpleNamespace(
+            run=lambda *args: dict(
+                tokens=[48, 49, 50],
+                decode_tok_s=10,
+                ttft_s=1,
+                elapsed_s=1.2,
+                accepted=1,
+                proposed=2,
+            )
+        )
+        service.tokenizer = SimpleNamespace(
+            decode=lambda ids: '<|tool_call>call:read{path:<|"|>/tmp/proof<|"|>}<tool_call|>'
+        )
+        message, finish, usage = service.generate([2], 16, {"read"})
+        self.assertEqual(finish, "tool_calls")
+        call = message["tool_calls"][0]
+        self.assertTrue(call["id"])
+        self.assertEqual(call["function"]["name"], "read")
+        self.assertEqual(json.loads(call["function"]["arguments"]), {"path": "/tmp/proof"})
+        self.assertEqual(usage["completion_tokens"], 3)
+
+    def test_mtp_refuses_undeclared_call(self):
+        from gemma4_tools import ToolFormatError
+
+        service = MTPChat.__new__(MTPChat)
+        service.trial = SimpleNamespace(run=lambda *args: dict(tokens=[48, 49, 50]))
+        service.tokenizer = SimpleNamespace(
+            decode=lambda ids: "<|tool_call>call:unexpected{}<tool_call|>"
+        )
+        with self.assertRaises(ToolFormatError):
+            service.generate([2], 16, {"read"})
 
 
 if __name__ == "__main__":

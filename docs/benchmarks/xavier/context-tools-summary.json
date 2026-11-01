@@ -1,0 +1,447 @@
+{
+  "date": "2026-11-01",
+  "contexts": {
+    "nemotron": 16384,
+    "gemma4-12b": 4096
+  },
+  "builds": "all four compiled successfully",
+  "reference": {
+    "steps": 4,
+    "context_lengths": [
+      7,
+      7,
+      1100,
+      1100
+    ],
+    "logit_max_errors": [
+      2.9057264e-07,
+      1.2107193e-06,
+      4.5403838e-05,
+      0.00017124228
+    ],
+    "long_position_atol": 0.0003,
+    "note": "FP32 RoPE inverse-frequency rounding amplified at high positions"
+  },
+  "cpu_tests": {
+    "mtp_reference": 2,
+    "queue_budget_tool_adapter": 6,
+    "shared_tool_parser": 7,
+    "passed": true
+  },
+  "api_checks": [
+    {
+      "name": "models",
+      "elapsed_s": 0.05752157105598599,
+      "data": {
+        "object": "list",
+        "data": [
+          {
+            "id": "nemotron",
+            "object": "model",
+            "owned_by": "cerebellum",
+            "context_length": 16384
+          },
+          {
+            "id": "gemma4-12b",
+            "object": "model",
+            "owned_by": "cerebellum",
+            "context_length": 4096
+          }
+        ]
+      }
+    },
+    {
+      "name": "arithmetic-nemotron:e4b",
+      "elapsed_s": 0.9975579170277342,
+      "data": {
+        "id": "chatcmpl-bb43d08113c547a58613dfe5731c8b5a",
+        "choices": [
+          {
+            "finish_reason": "stop",
+            "index": 0,
+            "message": {
+              "content": "391",
+              "role": "assistant",
+              "name": null,
+              "tool_calls": null,
+              "tool_call_id": null
+            },
+            "logprobs": null
+          }
+        ],
+        "created": 1793568293,
+        "model": "nemotron:e4b",
+        "system_fingerprint": "",
+        "object": "chat.completion",
+        "usage": {
+          "prompt_tokens": 25,
+          "completion_tokens": 5,
+          "total_tokens": 30,
+          "extra": null
+        }
+      }
+    },
+    {
+      "name": "arithmetic-gemma4-12b",
+      "elapsed_s": 1.2662120710592717,
+      "data": {
+        "id": "chatcmpl-94bc7d1797844f9690ce6d2189746685",
+        "object": "chat.completion",
+        "created": 1793568293,
+        "model": "gemma4-12b",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "391"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 29,
+          "completion_tokens": 4,
+          "total_tokens": 33,
+          "extra": {
+            "decode_tokens_per_s": 17.7697831128183,
+            "ttft_s": 1.058587813999111,
+            "elapsed_s": 1.2274137349995726,
+            "mtp_accepted": 2,
+            "mtp_proposed": 2
+          }
+        }
+      }
+    },
+    {
+      "name": "12b-tool-call",
+      "elapsed_s": 2.220031657954678,
+      "data": {
+        "id": "chatcmpl-e3ef30b0493e4dd48049c48e4df0c735",
+        "object": "chat.completion",
+        "created": 1793568295,
+        "model": "gemma4-12b",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": null,
+              "tool_calls": [
+                {
+                  "id": "call_f04d8469960c4803b50a88fd34116579",
+                  "type": "function",
+                  "function": {
+                    "name": "get_weather",
+                    "arguments": "{\"city\": \"Chicago\"}"
+                  }
+                }
+              ]
+            },
+            "finish_reason": "tool_calls"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 80,
+          "completion_tokens": 15,
+          "total_tokens": 95,
+          "extra": {
+            "decode_tokens_per_s": 16.428372420621894,
+            "ttft_s": 1.3374261310000293,
+            "elapsed_s": 2.1896103670005687,
+            "mtp_accepted": 10,
+            "mtp_proposed": 10
+          }
+        }
+      }
+    },
+    {
+      "name": "12b-tool-result-stream",
+      "elapsed_s": 2.295762607944198,
+      "data": {
+        "chunks": [
+          {
+            "id": "chatcmpl-2527eaded92f49d5a1c96110da40deba",
+            "object": "chat.completion.chunk",
+            "created": 1793568297,
+            "model": "gemma4-12b",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "role": "assistant",
+                  "content": ""
+                },
+                "finish_reason": null
+              }
+            ]
+          },
+          {
+            "id": "chatcmpl-2527eaded92f49d5a1c96110da40deba",
+            "object": "chat.completion.chunk",
+            "created": 1793568297,
+            "model": "gemma4-12b",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "content": "PROOF2fb9a52b"
+                },
+                "finish_reason": null
+              }
+            ]
+          },
+          {
+            "id": "chatcmpl-2527eaded92f49d5a1c96110da40deba",
+            "object": "chat.completion.chunk",
+            "created": 1793568297,
+            "model": "gemma4-12b",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {},
+                "finish_reason": "stop"
+              }
+            ]
+          },
+          {
+            "id": "chatcmpl-2527eaded92f49d5a1c96110da40deba",
+            "object": "chat.completion.chunk",
+            "created": 1793568297,
+            "model": "gemma4-12b",
+            "choices": [],
+            "usage": {
+              "prompt_tokens": 147,
+              "completion_tokens": 9,
+              "total_tokens": 156,
+              "extra": {
+                "decode_tokens_per_s": 15.232591079080933,
+                "ttft_s": 1.70041129999845,
+                "elapsed_s": 2.2256010040000547,
+                "mtp_accepted": 5,
+                "mtp_proposed": 6
+              }
+            }
+          }
+        ],
+        "text": "PROOF2fb9a52b"
+      }
+    },
+    {
+      "name": "12b-tool-stream",
+      "elapsed_s": 2.173657346982509,
+      "data": {
+        "chunks": [
+          {
+            "id": "chatcmpl-1da1d5fdc1d94b5bab08cd4f4e18c82d",
+            "object": "chat.completion.chunk",
+            "created": 1793568299,
+            "model": "gemma4-12b",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "role": "assistant",
+                  "content": ""
+                },
+                "finish_reason": null
+              }
+            ]
+          },
+          {
+            "id": "chatcmpl-1da1d5fdc1d94b5bab08cd4f4e18c82d",
+            "object": "chat.completion.chunk",
+            "created": 1793568299,
+            "model": "gemma4-12b",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "tool_calls": [
+                    {
+                      "index": 0,
+                      "id": "call_9580247bdbf4478c8a4305409e5ebdc3",
+                      "type": "function",
+                      "function": {
+                        "name": "get_weather",
+                        "arguments": "{\"city\": \"Paris\"}"
+                      }
+                    }
+                  ]
+                },
+                "finish_reason": null
+              }
+            ]
+          },
+          {
+            "id": "chatcmpl-1da1d5fdc1d94b5bab08cd4f4e18c82d",
+            "object": "chat.completion.chunk",
+            "created": 1793568299,
+            "model": "gemma4-12b",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {},
+                "finish_reason": "tool_calls"
+              }
+            ]
+          },
+          {
+            "id": "chatcmpl-1da1d5fdc1d94b5bab08cd4f4e18c82d",
+            "object": "chat.completion.chunk",
+            "created": 1793568299,
+            "model": "gemma4-12b",
+            "choices": [],
+            "usage": {
+              "prompt_tokens": 76,
+              "completion_tokens": 15,
+              "total_tokens": 91,
+              "extra": {
+                "decode_tokens_per_s": 17.05463569122889,
+                "ttft_s": 1.3250554259993805,
+                "elapsed_s": 2.145946605000063,
+                "mtp_accepted": 10,
+                "mtp_proposed": 10
+              }
+            }
+          }
+        ],
+        "text": ""
+      }
+    }
+  ],
+  "memory_samples": {
+    "minimum_available_mib": 8555,
+    "last_available_mib": 8555,
+    "maximum_gpu_c": 46.5
+  },
+  "limitation": "Device became unreachable during near-4K prefill. Near-limit 4K and 16K tests did not complete. User restored power; short 1220-token MTP decoding and real Pi tool checks passed afterward. Power diagnosis is deferred. Observed available RAM exceeds8GiB, but full-context memory headroom and sustained stability are not qualified.",
+  "recovery_checks": [
+    {
+      "name": "models",
+      "data": {
+        "object": "list",
+        "data": [
+          {
+            "id": "nemotron",
+            "object": "model",
+            "owned_by": "cerebellum",
+            "context_length": 16384
+          },
+          {
+            "id": "gemma4-12b",
+            "object": "model",
+            "owned_by": "cerebellum",
+            "context_length": 4096
+          }
+        ]
+      }
+    },
+    {
+      "name": "12b-over-sliding-window",
+      "data": {
+        "id": "chatcmpl-3838eb74220649948fe7f929f7206df6",
+        "object": "chat.completion",
+        "created": 1793568570,
+        "model": "gemma4-12b",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "391"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 1220,
+          "completion_tokens": 4,
+          "total_tokens": 1224,
+          "extra": {
+            "decode_tokens_per_s": 9.342788983207429,
+            "ttft_s": 19.82200428099999,
+            "elapsed_s": 20.143107540999992,
+            "mtp_accepted": 2,
+            "mtp_proposed": 2
+          }
+        }
+      }
+    },
+    {
+      "name": "nemotron-restored",
+      "data": {
+        "id": "chatcmpl-4bd32a97b5e947abbeb660d29292df79",
+        "choices": [
+          {
+            "finish_reason": "stop",
+            "index": 0,
+            "message": {
+              "content": "391",
+              "role": "assistant",
+              "name": null,
+              "tool_calls": null,
+              "tool_call_id": null
+            },
+            "logprobs": null
+          }
+        ],
+        "created": 1793568592,
+        "model": "nemotron:e4b",
+        "system_fingerprint": "",
+        "object": "chat.completion",
+        "usage": {
+          "prompt_tokens": 25,
+          "completion_tokens": 5,
+          "total_tokens": 30,
+          "extra": null
+        }
+      }
+    },
+    {
+      "name": "real-pi-read-tool",
+      "data": {
+        "tool_executions": 1,
+        "answer_matches_nonce": true,
+        "usage": {
+          "input": 324,
+          "output": 13,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "reasoning": 0,
+          "totalTokens": 337,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "health",
+      "data": {
+        "status": "ok",
+        "model": "nemotron",
+        "models": [
+          "nemotron",
+          "gemma4-12b"
+        ],
+        "queue": {
+          "active_model": null,
+          "waiting": 0,
+          "completed": 4
+        }
+      }
+    }
+  ],
+  "after_reboot": {
+    "minimum_available_mib": 8576,
+    "last_available_mib": 8576,
+    "maximum_gpu_c": 48.5,
+    "both_models_serving": true,
+    "real_pi_read_tool_passed": true
+  }
+}

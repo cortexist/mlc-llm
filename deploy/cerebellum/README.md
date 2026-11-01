@@ -13,16 +13,16 @@ The existing `nemotron:e4b` client ID is also accepted as a Nemotron alias.
 
 | API model | Decoder | Context | Tools | Response streaming |
 |---|---|---:|---|---|
-| `nemotron` | DFlash | 8,192 | Yes | Incremental chat; buffered tool turns |
-| `gemma4-12b` | Official QAT MTP, two proposals | 1,024 | No | Buffered SSE with keepalives |
+| `nemotron` | DFlash | 16,384 | Yes | Incremental chat; buffered tool turns |
+| `gemma4-12b` | Official QAT MTP, two proposals | 4,096 | Yes | Buffered SSE with keepalives |
 
 The 12B route uses the Heretic target and the original Unified QAT assistant.
-It supports text-only `/v1/chat/completions`, greedy single-output generation,
-and reserves two context slots for verification. `max_tokens` must fit the
-remaining context; its default is the smaller of 128 or the available budget.
-Oversized inputs and unsupported tools, stop strings, penalties, logprobs,
+It supports text `/v1/chat/completions`, greedy single-output generation,
+and native Gemma4 tool calls, and reserves two context slots for verification. `max_tokens` must fit the
+remaining context; its default is the smaller of 512 or the available budget.
+Oversized inputs and forced tool choices, stop strings, penalties, logprobs,
 response constraints and debug settings return HTTP 400. Unknown model IDs
-return HTTP 404. This HTTP adapter uses the bounded direct-VM prototype;
+return HTTP 404. This HTTP adapter uses the direct-VM implementation;
 it does not add an `MLCEngine` MTP speculative mode. See
 [the MTP build and validation notes](../../docs/deploy/xavier_gemma4_mtp.md).
 
@@ -69,7 +69,7 @@ clients are denied. No router port forwarding or Tailscale Funnel is configured.
 
 The model configuration is the measured Nemotron target, F16 DFlash draft,
 two proposals (`spec_draft_length=3`), `hybrid` prefill, one active sequence,
-8K context and prefix caching disabled. Multiple HTTP clients can queue
+16K context and prefix caching disabled. Multiple HTTP clients can queue
 requests. The service restarts on failure, with a bounded restart rate.
 Nginx, MLC and tailscaled are enabled at boot.
 
@@ -108,8 +108,8 @@ can otherwise terminate its background worker.
 ### Pi on nowhere
 
 `~/.pi/agent/models.json` registers `cerebellum/nemotron:e4b`, reads the API key
-from the private credential file, and declares the 8192-token context and
-1024-token output limit. `~/.pi/agent/bin/pi-cerebellum` selects it and loads
+from the private credential file, and declares the 16384-token context and
+2048-token output limit. `~/.pi/agent/bin/pi-cerebellum` selects it and loads
 the system trust store through `NODE_USE_SYSTEM_CA=1` before Node starts:
 
 ```bash
@@ -127,8 +127,8 @@ login sessions. Existing shells can run `export NODE_USE_SYSTEM_CA=1`. Some
 applications maintain independent trust stores and need their own configuration.
 
 Pi uses `openai-completions`, bearer authentication, `max_tokens`, system-role
-messages and greedy sampling. Its per-model compaction settings reserve 1536
-tokens and keep 2048 recent tokens. The default provider is `cerebellum` and the default client model is
+messages and greedy sampling. Its per-model compaction settings reserve 2048
+tokens and keep 4096 recent tokens. The default provider is `cerebellum` and the default client model is
 `nemotron:e4b`. The `pi-llama-cpp` package remains installed with
 `extensions: []`, suppressing its independent localhost:9931 startup probe;
 re-enable it through `pi config` when using that integration. The ordinary Pi
@@ -137,27 +137,23 @@ Tools are enabled: the launcher has no `--no-tools` flag and the model's
 `samplingParams` contains `temperature: 0, top_p: 1` without `tool_choice: none`.
 Start a new Pi process after changing its model configuration.
 
-`models.json` also registers `cerebellum/gemma4-12b` (1,024 context, 128 output
-tokens), with per-model compaction reserve/retention of 256/256. Reopen `/model`
-to reload Pi's local model registry; it does not automatically discover the
-server's `/v1/models` entries. The Nemotron default is unchanged.
-
-The 12B prototype cannot accommodate an ordinary coding session's tools and
-workspace prompt. Use the minimal text-chat launcher on nowhere:
+`models.json` also registers `cerebellum/gemma4-12b` (4,096 context, 512 output
+tokens), with compaction reserve/retention of 768/1024. Reopen `/model` to reload
+Pi's local registry. Nemotron remains the default. For a fresh 12B session on nowhere:
 
 ```bash
 ~/.pi/agent/bin/pi-gemma4
 ```
 
-It selects 12B with a short system prompt and disables tools, MCP, extensions,
-skills and workspace context-file loading. Start a fresh conversation rather
-than transferring a coding transcript into its 1K context. The server accepts
-both plain text strings and OpenAI text content blocks sent by Pi.
+The launcher enables read/bash/edit/write with a short system prompt and omits
+MCP, extensions, skills and workspace context files to fit the smaller window.
+Long existing coding transcripts may still exceed 4K. Both models accept native
+OpenAI tool-call histories and text content blocks. Tools execute on the client.
+12B buffers tool calls before emitting complete OpenAI SSE deltas.
 
-This model sets `samplingParams.max_tokens: 128` explicitly: Pi 1.4.0's generic
-4,096-token context safety margin otherwise clamps a 1K model to one output
-token. The server still enforces the actual 1K prompt/output/verification budget.
-The minimal launcher was verified through Pi itself with a `391` response.
+Pi 1.4.0's fixed 4,096-token safety margin clamps a 4K model's output to one
+token, so the 12B model sets `samplingParams.max_tokens: 512` explicitly. Server
+checks still enforce the actual prompt/output/verification budget.
 
 `pi-clm` also remains installed with `extensions: []`. Its default guard uses
 `window − 4096 − reserve` (2048 input tokens on this model), so it withheld even
@@ -189,8 +185,7 @@ are not implemented. Tool generations are buffered until the turn completes,
 then emitted as OpenAI SSE deltas with usage and finish reasons. SSE comments
 keep the connection active during generation. Malformed/incomplete calls and
 undeclared tool names produce errors rather than executable partial calls.
-Ordinary chat without tools retains MLC's existing streaming path. The 8K
-context and greedy-only restriction still apply.
+Ordinary chat without tools retains MLC's existing streaming path. The model context limits and greedy-only restriction still apply.
 
 CPU regression checks:
 
@@ -264,3 +259,45 @@ not a sustained-load or maximum-context qualification. A second restart with
 12B-first warmup also passed, including the existing Pi model alias. Detailed local logs are
 under `nowhere:~/Workspaces/cerebellum-llm-bench/mlc-jp5/logs/dual-resident-20261101`;
 see the [saved summary](../../docs/benchmarks/xavier/dual-resident-summary.json).
+
+
+## Building the 16K / 4K context libraries
+
+With the original converted artifacts present and the service stopped, run
+`bash scripts/build_xavier_contexts.sh` from the repository root. It creates
+separate `dist/target-16k`, `dist/draft-16k`, `dist/gemma4-12b-mtp-target-4k`
+and `dist/gemma4-12b-mtp-assistant-4k` configurations linking existing weights.
+No weight reconversion or C++ runtime rebuild is required. The serving script
+uses the corresponding `*-16k-sm72.so` and `*-4k-sm72.so` libraries. The original
+8K/1K artifacts remain available for rollback with the prior serving script.
+
+The 12B assistant keeps full shared KV history in bounded 4K buffers. Its local
+layers mask old states using the Transformers assistant's sliding-window rule;
+global layers see the full valid prefix. Absolute RoPE positions and frozen
+KV/position within each draft round are preserved. The driver derives capacity
+from library metadata and keeps prompt chunks at 512. Four recurrent CPU steps,
+including a 1,100-token history with deliberately large masked local values,
+are checked against Transformers; high-position tolerances account for the
+same FP32 RoPE frequency-rounding differences as the target port.
+
+
+### Context/tool qualification on 2026-11-01
+
+All four new libraries compiled and the service advertises 16,384 / 4,096 tokens.
+Both models answered arithmetic correctly. 12B generated a complete weather
+call, accepted its matching result, copied a random proof word from that result,
+and emitted structured tool-call SSE. After a device shutdown/reboot, the
+service recovered automatically; a 1,220-token 12B prompt decoded correctly
+with two of two proposals accepted. A real `pi-gemma4 --tools read` run read a
+local temporary file and returned its random proof word, which was absent from
+the user prompt. Six queue/budget/tool-adapter tests, seven shared tool tests,
+and the assistant reference checks pass.
+
+Sampled available system RAM stayed at or above 8,555 MiB before shutdown and
+8,576 MiB during the brief post-reboot checks (about 8.4 GiB). These readings
+include both resident model/assistant pairs. The near-4K prefill test was
+interrupted when the board became unreachable; the near-16K request was never
+run. Full-context peak RAM, sustained operation and long-context quality remain
+unqualified. The power issue is deferred; the short checks and advertised
+capacity do not guarantee 8 GiB available under every full-context workload.
+See [the saved context/tool results](../../docs/benchmarks/xavier/context-tools-summary.json).

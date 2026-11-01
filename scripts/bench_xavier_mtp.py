@@ -1,4 +1,4 @@
-"""Direct-VM, greedy Unified 12B MTP prototype (one sequence, <=1024 tokens).
+"""Direct-VM, greedy Unified 12B MTP prototype (one sequence, compiled context limit).
 
 Timings include Python control and CPU copies of shared KV/hidden states. This
 is a correctness/acceptance experiment, not the MLCEngine serving path.
@@ -25,6 +25,7 @@ class Program:
         self.vm = self.module["vm_load_executable"]()
         self.vm["vm_initialization"](2, 0, 1, 0)
         metadata = json.loads(self.vm["_metadata"]())
+        self.context_length = metadata["context_window_size"]
         get = tvm_ffi.get_global_func
         get("vm.builtin.tensor_cache.load")(str(model), 2, 0)
         self.params = get("vm.builtin.param_array_from_cache_by_name")(
@@ -39,12 +40,13 @@ class Program:
 class Trial:
     def __init__(self, target, assistant, capture=None):
         self.target, self.assistant = target, assistant
+        self.context_length = min(target.context_length, assistant.context_length)
         self.device = tvm_tirx.cuda(0)
         self.capture = capture
         self.captured = False
         self.builtin = lambda name: tvm_ffi.get_global_func("vm.builtin.kv_state_" + name)
         self.cache = target.vm["create_tir_paged_kv_cache"](
-            *[tvm_ffi.Shape([n]) for n in (1, 1024, 512, 16, 0)]
+            *[tvm_ffi.Shape([n]) for n in (1, self.context_length, 512, 16, 0)]
         )
 
     def tensor(self, array):
@@ -65,14 +67,16 @@ class Trial:
             raise ValueError("Use 0..2 draft tokens and a positive output limit")
         if not prompt:
             raise ValueError("A nonempty tokenized prompt is required")
-        if len(prompt) + count + drafts > 1024:
-            raise ValueError("Prototype context must fit 1024 tokens including verification")
+        if len(prompt) + count + drafts > self.context_length:
+            raise ValueError(
+                f"Context must fit {self.context_length} tokens including verification"
+            )
         self.builtin("clear")(self.cache)
         self.builtin("add_sequence")(self.cache, 0)
         self.device.sync()
         start = time.perf_counter()
         # The target's compiled seq_len bound is 512, even when the full
-        # request fits the 1024-token context. Preserve shared KV across chunks.
+        # request fits the full compiled context. Preserve shared KV across chunks.
         states = None
         for offset in range(0, len(prompt), 512):
             logits, hidden, *delta = self.forward(prompt[offset : offset + 512], prefill=True)
@@ -97,7 +101,9 @@ class Trial:
             width = min(drafts, count - len(output) - 1)
             shared = (
                 [
-                    self.tensor(np.pad(a, ((0, 0), (0, 1024 - a.shape[1]), (0, 0), (0, 0))))
+                    self.tensor(
+                        np.pad(a, ((0, 0), (0, self.context_length - a.shape[1]), (0, 0), (0, 0)))
+                    )
                     for a in states
                 ]
                 if width

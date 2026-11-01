@@ -63,6 +63,7 @@ class MTPTest(unittest.TestCase):
                 {
                     "text_config": cfg,
                     "backbone_hidden_size": 48,
+                    "context_window_size": 2048,
                 }
             )
         )
@@ -104,17 +105,34 @@ class MTPTest(unittest.TestCase):
             ),
             "full_attention": tuple(torch.from_numpy(a).permute(0, 2, 1, 3) for a in arrays[4:6]),
         }
+        reference.set_attn_implementation("eager")
         expected_hidden = torch.from_numpy(arrays[1])
-        for step in range(2):
+        for step in range(4):
+            if step == 2:
+                for i in range(2, 6):
+                    shape = (1, 1100, *arrays[i].shape[2:])
+                    arrays[i] = rng.normal(0, 0.3, shape).astype("float32")
+                    if i < 4:
+                        arrays[i][:, :60] *= 20  # Old local states must be masked.
+                position = np.array([1100], "int32")
+            length = arrays[2].shape[1]
+            shared = {
+                "sliding_attention": tuple(
+                    torch.from_numpy(a).permute(0, 2, 1, 3) for a in arrays[2:4]
+                ),
+                "full_attention": tuple(
+                    torch.from_numpy(a).permute(0, 2, 1, 3) for a in arrays[4:6]
+                ),
+            }
             actual = vm["mtp_step"](
                 *[
                     tvm_tirx.runtime.tensor(
-                        a if i < 2 else np.pad(a, ((0, 0), (0, 1017), (0, 0), (0, 0)))
+                        a if i < 2 else np.pad(a, ((0, 0), (0, 2048 - length), (0, 0), (0, 0)))
                     )
                     for i, a in enumerate(arrays)
                 ],
                 tvm_tirx.runtime.tensor(position),
-                tvm_tirx.runtime.tensor(np.array([7], "int32")),
+                tvm_tirx.runtime.tensor(np.array([length], "int32")),
                 weights,
             )
             with torch.no_grad():
@@ -124,11 +142,14 @@ class MTPTest(unittest.TestCase):
                     shared_kv_states=shared,
                     use_cache=False,
                 )
+            # As in the target RoPE test, inverse-frequency FP32 rounding is
+            # amplified at high absolute positions.
+            tolerance = 2e-5 if step < 2 else 3e-4
             np.testing.assert_allclose(
-                actual[0].numpy(), expected.logits.numpy(), atol=2e-5, rtol=2e-4
+                actual[0].numpy(), expected.logits.numpy(), atol=tolerance, rtol=2e-4
             )
             np.testing.assert_allclose(
-                actual[1].numpy(), expected.last_hidden_state.numpy(), atol=2e-5, rtol=2e-4
+                actual[1].numpy(), expected.last_hidden_state.numpy(), atol=tolerance, rtol=2e-4
             )
             print(
                 "HF assistant step passed:",
