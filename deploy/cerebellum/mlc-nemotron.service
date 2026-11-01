@@ -1,0 +1,31 @@
+[Unit]
+Description=Nemotron MLC-LLM API on Xavier
+After=network.target nvpmodel.service jetson-clocks.service
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=zero
+Group=zero
+WorkingDirectory=/home/zero/Workspaces/mlc-dflash-work
+Environment=PATH=/home/zero/Workspaces/mlc-venv/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONPATH=/home/zero/Workspaces/mlc-dflash-work/python
+Environment=MLC_LIBRARY_PATH=/home/zero/Workspaces/mlc-dflash-work/build
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=OMP_NUM_THREADS=2
+Environment=TVM_NUM_THREADS=2
+Environment=PYTHONUNBUFFERED=1
+Environment=MLC_NEMOTRON_API_KEY_FILE=/home/zero/.config/mlc-nemotron/api-key
+Environment=MLC_NEMOTRON_PREFILL=hybrid
+ExecStart=/home/zero/Workspaces/mlc-venv/bin/python scripts/serve_xavier_nemotron.py
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=45
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

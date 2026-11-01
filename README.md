@@ -207,6 +207,15 @@ also occurred during the investigation; these measurements do not establish
 long-term hardware stability. Benchmark runners use temperature/memory stop
 limits. Keep compilation and GPU inference sequential.
 
+## HTTPS serving on cerebellum
+
+The deployed API is **`https://cerebellum.lan/v1`**, model **`nemotron`**,
+reachable from the LAN and the existing Headscale tailnet. It uses a
+certificate signed by the local CA, bearer authentication, streaming responses,
+and the optimized Nemotron/DFlash configuration. See the
+[deployment and client instructions](deploy/cerebellum/README.md) for CA trust,
+credentials, service management and certificate renewal.
+
 ## Upstream and attribution
 
 [MLC-LLM](https://github.com/mlc-ai/mlc-llm) and its contributors provide the
