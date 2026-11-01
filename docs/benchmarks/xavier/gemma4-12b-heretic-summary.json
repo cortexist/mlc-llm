@@ -35,5 +35,55 @@
       "wall_s": 49.606779015999564,
       "repeat_output_identical": true
     }
+  },
+  "dflash_evaluation": {
+    "checkpoint": "z-lab/gemma4-12B-it-DFlash",
+    "checkpoint_revision": "541d351de6dc9cd698fc348612bd5cdf03c636d0",
+    "weight_sha256": "8b32507dcff3ca4c1bbbb6c1cca7d17749bbf394480024e505228b6ed40afa02",
+    "draft_dtype": "float16",
+    "draft_tokens": 2,
+    "target_feature_layers": [
+      1,
+      10,
+      19,
+      27,
+      36,
+      45
+    ],
+    "status": "not qualified as an accelerator: zero accepted draft tokens; longer runs interrupted by device power loss",
+    "embedding_scale_regression_max_abs_error": 4.7683716e-07,
+    "initial_results": {
+      "448": {
+        "measured_repeats": 2,
+        "prefill_tok_s": 109.48558826060415,
+        "decode_tok_s": 5.257893774354198,
+        "wall_s": 28.250763255498896,
+        "drafted_tokens": 508,
+        "accepted_draft_tokens": 0,
+        "output_matches_plain": true
+      },
+      "chat": {
+        "measured_repeats": 2,
+        "prefill_tok_s": 90.57658997977255,
+        "decode_tok_s": 6.792419612476398,
+        "wall_s": 20.478418620998127,
+        "drafted_tokens": 508,
+        "accepted_draft_tokens": 0,
+        "output_matches_plain": true
+      }
+    },
+    "raw_embedding_results": {
+      "chat": {
+        "measured_repeats": 2,
+        "prefill_tok_s": 89.93259362688735,
+        "decode_tok_s": 6.840012076122751,
+        "wall_s": 20.361000799500005,
+        "drafted_tokens": 508,
+        "accepted_draft_tokens": 0,
+        "output_matches_plain": true
+      }
+    },
+    "target_embedding_scale": 61.96875,
+    "input_embedding_scale": 1.0
   }
 }

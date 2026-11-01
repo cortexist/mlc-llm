@@ -8,7 +8,7 @@ from tvm.relax.frontend import nn
 from mlc_llm.model.dflash.dflash_model import DFlashConfig, DFlashDraftModel
 
 
-def build(cached, window, arrays):
+def build(cached, window, arrays, target_embedding_scale=1.0):
     cfg = DFlashConfig(
         hidden_size=32,
         intermediate_size=64,
@@ -23,6 +23,7 @@ def build(cached, window, arrays):
         block_size=3,
         context_window_size=64,
         target_model_dtype="float32",
+        target_embedding_scale=target_embedding_scale,
         cache_context_kv=cached,
         sliding_window=window,
         dflash_config={"target_layer_ids": [0, 2, 4], "mask_token_id": 4},
@@ -108,10 +109,39 @@ def test_context_cache():
                 ).numpy()
                 np.testing.assert_allclose(short, expected, rtol=2e-4, atol=2e-4)
             print(
-                f"window={window} context={length} max_abs_error={np.max(np.abs(actual - expected))}",
+                f"window={window} context={length} "
+                f"max_abs_error={np.max(np.abs(actual - expected))}",
                 flush=True,
             )
 
 
+def test_target_embedding_scale():
+    """A scaled target embedder must reproduce a raw-embedding draft run."""
+    tensor = tvm_tirx.runtime.tensor
+    arrays = {}
+    raw, rw = build(True, 0, arrays)
+    scale = 32**0.5
+    scaled, sw = build(True, 0, arrays, target_embedding_scale=scale)
+    rng = np.random.default_rng(19)
+    features = tensor(rng.normal(0, 0.1, (1, 2, 96)).astype("float32"))
+    noise = rng.normal(0, 1, (1, 3, 32)).astype("float32")
+    cos = tensor(np.ones((1, 5, 1, 8), "float32"))
+    sin = tensor(np.zeros((1, 5, 1, 8), "float32"))
+    mask = tensor(np.zeros((1, 1, 3, 5), "float32"))
+    raw_context = raw["project_target_hidden"](features, rw)
+    scaled_context = scaled["project_target_hidden"](features, sw)
+    expected = raw["draft_forward"](tensor(noise), raw_context, cos, sin, mask, rw).numpy()
+    actual = scaled["draft_forward"](
+        tensor(noise * scale), scaled_context, cos, sin, mask, sw
+    ).numpy()
+    np.testing.assert_allclose(actual, expected, rtol=2e-4, atol=2e-4)
+    print(
+        "Scaled target embeddings match raw DFlash input:",
+        np.max(np.abs(actual - expected)),
+        flush=True,
+    )
+
+
 if __name__ == "__main__":
     test_context_cache()
+    test_target_embedding_scale()

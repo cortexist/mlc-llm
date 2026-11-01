@@ -5,14 +5,15 @@ generates an entire block of tokens in a single parallel forward pass.
 """
 
 import dataclasses
-from typing import Any, Dict, List, Optional
+import math
+from typing import Any, Optional
 
 from tvm import te
-from tvm_tirx import tirx
 from tvm.relax.frontend import nn
 from tvm.relax.frontend.nn import Tensor, op
 from tvm.relax.frontend.nn.op import wrap_nested
 from tvm.relax.op import strided_slice as _strided_slice
+from tvm_tirx import tirx
 
 from mlc_llm import op as op_ext
 from mlc_llm.model.qwen3.qwen3_model import Qwen3MLP
@@ -47,20 +48,29 @@ class DFlashConfig(ConfigBase):  # pylint: disable=too-many-instance-attributes
     max_batch_size: int = 1
     dtype: str = "float32"
     target_model_dtype: str = "float16"
+    input_embedding_scale: float = 1.0
+    target_embedding_scale: float = 1.0
     sliding_window: int = 0
     cache_context_kv: bool = True
-    dflash_config: Dict[str, Any] = dataclasses.field(default_factory=dict)
-    kwargs: Dict[str, Any] = dataclasses.field(default_factory=dict)
+    dflash_config: dict[str, Any] = dataclasses.field(default_factory=dict)
+    kwargs: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     def __post_init__(self):
         # Extract DFlash-specific config from nested dflash_config
         dflash_cfg = self.dflash_config or self.kwargs.get("dflash_config", {})
         self.mask_token_id: int = dflash_cfg.get("mask_token_id", 151669)
-        self.target_layer_ids: List[int] = dflash_cfg.get("target_layer_ids", [1, 9, 17, 25, 33])
+        self.target_layer_ids: list[int] = dflash_cfg.get("target_layer_ids", [1, 9, 17, 25, 33])
         # Override target_model_dtype from dflash_config if present
         if "target_model_dtype" in dflash_cfg:
             self.target_model_dtype = dflash_cfg["target_model_dtype"]
         self.num_target_feature_layers = len(self.target_layer_ids)
+        self.input_embedding_scale = float(
+            dflash_cfg.get("input_embedding_scale", self.input_embedding_scale)
+        )
+        if not math.isfinite(self.target_embedding_scale) or self.target_embedding_scale <= 0:
+            raise ValueError("target_embedding_scale must be finite and positive")
+        if not math.isfinite(self.input_embedding_scale):
+            raise ValueError("input_embedding_scale must be finite")
 
         if self.context_window_size == 0:
             for name in ["max_position_embeddings", "max_sequence_length"]:
@@ -275,10 +285,6 @@ class DFlashDecoderLayer(nn.Module):
             def _set(layer, hint):
                 layer.attrs["shard_strategy"] = hint
 
-            hd = config.head_dim
-            q = self.self_attn.num_q_heads * hd
-            k = self.self_attn.num_kv_heads * hd
-            v = self.self_attn.num_kv_heads * hd
             i = self.mlp.intermediate_size
             _set(
                 self.self_attn.q_proj.weight,
@@ -363,6 +369,7 @@ class DFlashDraftModel(nn.Module):  # pylint: disable=too-many-instance-attribut
         self.rope_theta = config.rope_theta
         self.tensor_parallel_shards = config.tensor_parallel_shards
         self.target_model_dtype = config.target_model_dtype
+        self.noise_embedding_scale = config.input_embedding_scale / config.target_embedding_scale
         self.dtype = "float32"
 
     def to(self, dtype: Optional[str] = None):
@@ -409,6 +416,11 @@ class DFlashDraftModel(nn.Module):  # pylint: disable=too-many-instance-attribut
         # Keep the unnormalized residual in FP32; normalized matrix inputs and
         # the final output use the configured model/target dtypes.
         hidden_states = noise_embedding.astype("float32")
+        # Some targets (Gemma4) scale their public embedding output. DFlash
+        # checkpoints trained on raw table lookups must undo that scale before
+        # the first residual is established, not just before normalization.
+        if self.noise_embedding_scale != 1.0:
+            hidden_states = hidden_states * self.noise_embedding_scale
         context = (
             op.split(projected_target_hidden, self.num_hidden_layers, axis=-1)
             if self.cache_context_kv

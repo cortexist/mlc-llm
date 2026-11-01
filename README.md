@@ -97,6 +97,11 @@ conversion/build instructions, validation and native-MTP compatibility, and
 [the saved summary](docs/benchmarks/xavier/gemma4-12b-heretic-summary.json)
 for the measured means.
 
+The experimental z-lab DFlash pairing did not accelerate this checkpoint:
+**6.84 versus 11.72 tok/s** on the short prompt, with **zero accepted draft
+tokens**. The 12B experiment records the input-scaling correction and remaining
+compatibility investigation; these plain rates do not include speculative decoding.
+
 ## Improvements in this fork
 
 - **CUDA 11.4 support:** pinned TVM/TIRx compatibility patches, nvcc instead of

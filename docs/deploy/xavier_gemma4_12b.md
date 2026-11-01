@@ -73,6 +73,65 @@ implementation on CPU, including positions 0, 17 and 1025. It also checks the
 original E-series configuration. All source text tensors are accounted for by
 the loader; no checkpoint tensors are synthesized.
 
+## DFlash experiment
+
+The renamed local file `~/Models/gemma-4-12B-IT-DFlash-assistant/` matches
+[z-lab/gemma4-12B-it-DFlash](https://huggingface.co/z-lab/gemma4-12B-it-DFlash)
+at revision `541d351de6dc9cd698fc348612bd5cdf03c636d0`. Its weight SHA-256 is
+`8b32507dcff3ca4c1bbbb6c1cca7d17749bbf394480024e505228b6ed40afa02`.
+It has five Qwen-style layers and projects six target-layer outputs
+`[1, 10, 19, 27, 36, 45]` from width 23040 to 3840. The weights convert from
+BF16 to FP16 without further quantization.
+
+The upstream draft code reads raw embedding-table values. MLC's Gemma4 embed
+entry point includes the model's embedding multiplier, so the draft now accepts
+explicit `target_embedding_scale` and `input_embedding_scale` configuration.
+This experiment uses `61.96875` (FP16 sqrt(3840)) and `1.0`, respectively, in
+the draft's `model_config`. Both default to 1, preserving existing Nemotron
+behavior. Scaling is corrected before the first unnormalized residual.
+The CPU regression compares an entire draft forward pass with raw inputs
+against scaled target inputs and measures a maximum absolute error of
+`4.77e-7`. Existing cached/uncached context checks also pass.
+
+The correction is necessary for that input convention, but **does not resolve
+this model pairing's acceptance problem**:
+
+| Configuration | Prompt tokens | Decode tok/s | Accepted / proposed draft tokens |
+|---|---:|---:|---:|
+| Plain | 161 | 11.72 | — |
+| DFlash, original embedding path | 161 | 6.79 | 0 / 508 |
+| DFlash, original embedding path | 448 | 5.26 | 0 / 508 |
+| DFlash, corrected raw embedding path | 161 | 6.84 | 0 / 508 |
+
+Each DFlash row averages two warmed, forced-128-token requests with two draft
+proposals. Their output text matches plain decoding exactly because target
+verification rejects all proposals. Both natural arithmetic checks return
+`391`. A separate 12-token diagnostic has finite context, hidden states and
+logits, but repeatedly proposes token 258882 (the image-ending token), which
+the target rejects. This pairing is not qualified as an accelerator. Separating
+checkpoint/target compatibility from remaining implementation differences needs
+a reference comparison of draft inputs and outputs; the trace alone cannot
+establish the cause.
+
+Device power losses interrupted the long initial run and the corrected sweep;
+no long-context corrected rate is reported. Power-supply investigation remains
+deferred. The completed plain benchmark is unaffected, and Nemotron remains
+the serving model.
+
+Experimental artifacts on cerebellum:
+
+- `dist/gemma4-12b-dflash-target`: target config with the six feature layers,
+  linking to the converted 12B weights under `~/Models`.
+- `dist/gemma4-12b-dflash`: converted FP16 draft and its chat configuration.
+- `dist/libs/gemma4-12b-dflash-q4f16_1-sm72.so`: target with feature exports.
+- `dist/libs/gemma4-12b-draft-rawembed-sm72.so`: corrected draft library.
+
+The benchmark runner accepts `--target`, `--draft`, `--target-lib` and
+`--draft-lib` for these artifacts. Detailed local logs are retained under
+`~/Workspaces/cerebellum-llm-bench/mlc-jp5/logs/gemma4-12b-heretic-20261101/`
+on nowhere; the numerical summary is versioned in
+[`docs/benchmarks/xavier/gemma4-12b-heretic-summary.json`](../benchmarks/xavier/gemma4-12b-heretic-summary.json).
+
 ## Native MTP assistant
 
 The local `gemma-4-12B-IT-QAT-Q4_0-unquantized-assistant` checkpoint is
