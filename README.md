@@ -18,11 +18,16 @@ fixes needed to run it, q4f16_1 weights and plain decoding. The optimized fork
 uses the same target quantization, an F16 DFlash draft with two proposals,
 Q8 activation kernels, and `--prefill-variant hybrid`.
 
-| Prompt tokens | Baseline prefill | Fork prefill | Baseline decode | Fork decode |
-|---|---:|---:|---:|---:|
-| 161 | 108.28 | **240.79** | 11.90 | **31.68** |
-| 448 | 115.47 | **395.16** | 10.80 | **34.16** |
-| 1,768 | 82.66 | **278.67** | 10.06 | **31.10** |
+| Prompt tokens | Baseline prefill | Fork prefill | Baseline decode | Fork decode | Fork decode MTP |
+|---|---:|---:|---:|---:|---:|
+| 161 | 108.28 | **240.79** | 11.90 | 23.24 | **31.68** |
+| 448 | 115.47 | **395.16** | 10.80 | 19.63 | **34.16** |
+| 1,768 | 82.66 | **278.67** | 10.06 | 17.18 | **31.10** |
+
+**Fork decode** is the November 1 native-matrix, non-speculative control,
+measured before the prefill changes (see the
+[experiment record](docs/deploy/xavier_dflash.md)). **Fork decode MTP** uses
+two-token DFlash speculative decoding with the final `hybrid` prefill configuration.
 
 This compares the complete optimized configuration with the initial engine;
 it includes speculative decoding and changed arithmetic. Baseline measurements
