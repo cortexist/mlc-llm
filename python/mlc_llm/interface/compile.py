@@ -100,7 +100,7 @@ def _apply_preproc_to_params_and_check_pipeline(
 def _infer_kv_state_kind(model_type) -> str:
     if "rwkv" in model_type:
         return "rnn_state"
-    if "medusa" in model_type:
+    if "medusa" in model_type or "dflash" in model_type:
         return "none"
     if "qwen3_5" in model_type:
         return "hybrid"
@@ -141,6 +141,8 @@ def _compile(args: CompileArgs, model_config: ConfigBase):
         logger.info(
             "Disabling FlashInfer because %s requires the generic KV cache", args.model.name
         )
+    # Restore kwargs that were stripped by overrides.apply (asdict pops kwargs)
+    model_config.kwargs.update(_kwargs)
     with args.target:
         op_ext.enable(
             target=args.target,
@@ -275,7 +277,9 @@ def compile(
         model_config = model_type.config.from_dict(model_config)
     else:
         model_config = model_type.config.from_dict(config)
-    model_config.kwargs = {"active_vocab_size": avs} if avs is not None else {}
+    # Preserve kwargs from config (e.g., dflash_target_layer_ids) and merge active_vocab_size
+    if avs is not None:
+        model_config.kwargs["active_vocab_size"] = avs
     args = CompileArgs(
         model_config,
         quantization,

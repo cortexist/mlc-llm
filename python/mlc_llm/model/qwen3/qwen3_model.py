@@ -255,6 +255,38 @@ class Qwen3Model(nn.Module):
         hidden_states = self.norm(hidden_states)
         return hidden_states
 
+    def forward_with_hidden_states(
+        self,
+        inputs: Tensor,
+        paged_kv_cache: PagedKVCache,
+        target_layer_ids: Tuple[int, ...],
+    ):
+        """Forward pass that incrementally concatenates target-layer hidden states."""
+        if not target_layer_ids:
+            raise ValueError("target_layer_ids must be non-empty")
+
+        hidden_states = inputs
+        target_hidden = None
+        next_target_layer_idx = 0
+        for layer_id, layer in enumerate(self.layers):
+            hidden_states = layer(hidden_states, paged_kv_cache, layer_id)
+            if (
+                next_target_layer_idx < len(target_layer_ids)
+                and layer_id == target_layer_ids[next_target_layer_idx]
+            ):
+                if target_hidden is None:
+                    target_hidden = hidden_states
+                else:
+                    target_hidden = op.concat([target_hidden, hidden_states], dim=-1)
+                next_target_layer_idx += 1
+        hidden_states = self.norm(hidden_states)
+        if next_target_layer_idx != len(target_layer_ids):
+            raise ValueError(
+                "target_layer_ids must be strictly increasing layer indices within the model"
+            )
+        assert target_hidden is not None
+        return hidden_states, target_hidden
+
 
 class Qwen3LMHeadModel(nn.Module):
     def __init__(self, config: Qwen3Config):
@@ -274,6 +306,16 @@ class Qwen3LMHeadModel(nn.Module):
         self.tensor_parallel_shards = config.tensor_parallel_shards
         self.head_dim = config.head_dim
         self.weight_block_size = config.weight_block_size
+        # DFlash target layer IDs (set via kwargs when compiling for DFlash mode)
+        dflash_target_layer_ids = config.kwargs.get("dflash_target_layer_ids", None)
+        if dflash_target_layer_ids is not None:
+            if list(dflash_target_layer_ids) != sorted(dflash_target_layer_ids):
+                raise ValueError("dflash_target_layer_ids must be in ascending order")
+            self._dflash_target_layer_ids = tuple(dflash_target_layer_ids)
+            self._dflash_num_target_layers = len(dflash_target_layer_ids)
+        else:
+            self._dflash_target_layer_ids = None
+            self._dflash_num_target_layers = 0
 
     def to(self, dtype: Optional[str] = None):
         super().to(dtype=dtype)
@@ -348,6 +390,76 @@ class Qwen3LMHeadModel(nn.Module):
     def batch_verify(self, input_embeds: Tensor, paged_kv_cache: PagedKVCache):
         logits = self.batch_forward(input_embeds, paged_kv_cache)
         return logits, paged_kv_cache
+
+    def batch_decode_with_hidden_states(
+        self,
+        input_embeds: Tensor,
+        paged_kv_cache: PagedKVCache,
+    ):
+        """Decode that returns (logits, target_hidden, kv_cache)."""
+        op_ext.configure()
+        hidden_states, target_hidden = self.model.forward_with_hidden_states(
+            input_embeds, paged_kv_cache, self._dflash_target_layer_ids
+        )
+        if self.tie_word_embeddings:
+            logits = self.model.embed_tokens.lm_head_forward(hidden_states)
+        else:
+            logits = self.lm_head(hidden_states)
+        if logits.dtype != "float32":
+            logits = logits.astype("float32")
+        return logits, target_hidden, paged_kv_cache
+
+    def get_logits(self, hidden_states: Tensor):
+        op_ext.configure()
+        if self.tie_word_embeddings:
+            logits = self.model.embed_tokens.lm_head_forward(hidden_states)
+        else:
+            logits = self.lm_head(hidden_states)
+        if logits.dtype != "float32":
+            logits = logits.astype("float32")
+        return logits
+
+    def batch_prefill_with_hidden_states(
+        self,
+        input_embeds: Tensor,
+        logit_positions: Tensor,
+        paged_kv_cache: PagedKVCache,
+    ):
+        """Prefill that returns (logits, target_hidden, kv_cache).
+        Collects real intermediate hidden states from target layers via incremental concat."""
+        op_ext.configure()
+        if self.tensor_parallel_shards > 1:
+            logit_positions = op.ccl_broadcast_from_worker0(logit_positions)
+        hidden_states, target_hidden = self.model.forward_with_hidden_states(
+            input_embeds, paged_kv_cache, self._dflash_target_layer_ids
+        )
+        hidden_states_at_logits = op.take(hidden_states, logit_positions, axis=1)
+        if self.tie_word_embeddings:
+            logits = self.model.embed_tokens.lm_head_forward(hidden_states_at_logits)
+        else:
+            logits = self.lm_head(hidden_states_at_logits)
+        if logits.dtype != "float32":
+            logits = logits.astype("float32")
+        return logits, target_hidden, paged_kv_cache
+
+    def batch_verify_with_hidden_states(
+        self,
+        input_embeds: Tensor,
+        paged_kv_cache: PagedKVCache,
+    ):
+        """Verify that returns (logits, target_hidden, kv_cache).
+        Collects real intermediate hidden states from target layers via incremental concat."""
+        op_ext.configure()
+        hidden_states, target_hidden = self.model.forward_with_hidden_states(
+            input_embeds, paged_kv_cache, self._dflash_target_layer_ids
+        )
+        if self.tie_word_embeddings:
+            logits = self.model.embed_tokens.lm_head_forward(hidden_states)
+        else:
+            logits = self.lm_head(hidden_states)
+        if logits.dtype != "float32":
+            logits = logits.astype("float32")
+        return logits, target_hidden, paged_kv_cache
 
     def create_paged_kv_cache(
         self,
@@ -437,6 +549,49 @@ class Qwen3LMHeadModel(nn.Module):
                 },
             },
         }
+        # Add DFlash hidden-state methods when target layer IDs are configured
+        if self._dflash_target_layer_ids is not None:
+            hidden_dim = self._dflash_num_target_layers * self.hidden_size
+            mod_spec["get_logits"] = {
+                "hidden_states": nn.spec.Tensor(
+                    ["seq_len", self.hidden_size], self.dtype
+                ),
+                "$": {
+                    "param_mode": "packed",
+                    "effect_mode": "none",
+                },
+            }
+            mod_spec["batch_prefill_with_hidden_states"] = {
+                "input_embeds": nn.spec.Tensor(
+                    [1, "seq_len", self.hidden_size], self.dtype
+                ),
+                "logit_positions": nn.spec.Tensor(["batch_size"], "int32"),
+                "paged_kv_cache": nn.spec.Object(object_type=PagedKVCache),
+                "$": {
+                    "param_mode": "packed",
+                    "effect_mode": "none",
+                },
+            }
+            mod_spec["batch_verify_with_hidden_states"] = {
+                "input_embeds": nn.spec.Tensor(
+                    [1, "seq_len", self.hidden_size], self.dtype
+                ),
+                "paged_kv_cache": nn.spec.Object(object_type=PagedKVCache),
+                "$": {
+                    "param_mode": "packed",
+                    "effect_mode": "none",
+                },
+            }
+            mod_spec["batch_decode_with_hidden_states"] = {
+                "input_embeds": nn.spec.Tensor(
+                    ["batch_size", 1, self.hidden_size], self.dtype
+                ),
+                "paged_kv_cache": nn.spec.Object(object_type=PagedKVCache),
+                "$": {
+                    "param_mode": "packed",
+                    "effect_mode": "none",
+                },
+            }
         return nn.spec.ModuleSpec.from_raw(mod_spec, self)
 
 

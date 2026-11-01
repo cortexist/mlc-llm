@@ -11,6 +11,9 @@
 #include <tvm/ffi/string.h>
 #include <tvm/runtime/tensor.h>
 
+#include <memory>
+#include <unordered_map>
+
 #include "../base.h"
 #include "../support/result.h"
 #include "config.h"
@@ -33,6 +36,27 @@ using tvm::ffi::Tensor;
 
 // Declare the sampler class for `Model::CreateSampler`.
 class Sampler;
+
+struct DFlashProjectedHiddenState {
+  Tensor storage{nullptr};
+  int64_t length = 0;
+  int64_t capacity = 0;
+
+  bool defined() const { return storage.defined(); }
+
+  Tensor View() const {
+    TVM_FFI_ICHECK(defined());
+    TVM_FFI_ICHECK_EQ(storage->ndim, 3);
+    TVM_FFI_ICHECK_LE(length, capacity);
+    return storage.CreateView({1, length, storage->shape[2]}, storage->dtype);
+  }
+};
+
+struct DFlashDraftAuxTensors {
+  Tensor cos{nullptr};
+  Tensor sin{nullptr};
+  Tensor mask{nullptr};
+};
 
 /*!
  * \brief The workspace tensors that may be shared across different
@@ -67,6 +91,21 @@ struct ModelWorkspace {
    * requests.
    */
   Tensor draft_probs_storage{nullptr};
+
+  /*!
+   * \brief DFlash: projected target hidden states per request, keyed by internal_id.
+   * Persists from prefill/verify to the next draft step.
+   * Wrapped in shared_ptr so all engine actions share the same map.
+   */
+  std::shared_ptr<std::unordered_map<int64_t, DFlashProjectedHiddenState>>
+      dflash_projected_target_hidden =
+          std::make_shared<std::unordered_map<int64_t, DFlashProjectedHiddenState>>();
+
+  /*!
+   * \brief DFlash draft auxiliary tensors cached by total sequence length.
+   */
+  std::shared_ptr<std::unordered_map<int64_t, DFlashDraftAuxTensors>> dflash_draft_aux_tensors =
+      std::make_shared<std::unordered_map<int64_t, DFlashDraftAuxTensors>>();
 };
 
 /*!
@@ -376,6 +415,58 @@ class ModelObj : public Object {
   /*! \brief Scatter the draft token probabilities of the given indices to the dst tensor. */
   virtual void ScatterDraftProbs(const Tensor& input, const std::vector<int>& indices,
                                  Tensor* dst) = 0;
+
+  /*********************** DFlash Speculative Decoding  ***********************/
+
+  /*!
+   * \brief Batch prefill returning both logits and intermediate hidden states.
+   * Used by DFlash target model for extracting features from specific layers.
+   * \param embeddings The embedding of the input to be prefilled.
+   * \param seq_ids The ids of the sequences in the KV cache.
+   * \param lengths The length of each sequence to prefill.
+   * \return A pair of (logits Tensor, target_hidden ObjectRef).
+   */
+  virtual std::pair<Tensor, ObjectRef> BatchPrefillWithHiddenStates(
+      const ObjectRef& embeddings, const std::vector<int64_t>& seq_ids,
+      const std::vector<int>& lengths) = 0;
+  virtual std::pair<Tensor, ObjectRef> BatchDecodeWithHiddenStates(
+      const ObjectRef& embeddings, const std::vector<int64_t>& seq_ids) = 0;
+
+  /*!
+   * \brief Batch verify returning both logits and intermediate hidden states.
+   * Used by DFlash target model.
+   * \param embeddings The embedding of the input to be verified.
+   * \param seq_ids The ids of the sequences in the KV cache.
+   * \param lengths The length of each sequence to verify.
+   * \param token_tree_parent_ptr Token tree parent pointers for speculative verification.
+   * \return A pair of (logits Tensor, target_hidden ObjectRef).
+   */
+  virtual std::pair<Tensor, ObjectRef> BatchVerifyWithHiddenStates(
+      const ObjectRef& embeddings, const std::vector<int64_t>& seq_ids,
+      const std::vector<int>& lengths,
+      const std::vector<int64_t>& token_tree_parent_ptr) = 0;
+
+  /*!
+   * \brief Project concatenated multi-layer target hidden states to hidden_size.
+   * Used by DFlash draft model.
+   * \param target_hidden The concatenated hidden states [total_len, num_layers*hidden_size].
+   * \return The projected hidden states [total_len, hidden_size].
+   */
+  virtual ObjectRef ProjectTargetHiddenStates(const ObjectRef& target_hidden) = 0;
+
+  /*!
+   * \brief Stateless DFlash draft forward pass.
+   * \param draft_embeddings The draft token embeddings [1, block_size, hidden_size].
+   * \param projected_target_hidden The projected target context [1, ctx_len, hidden_size].
+   * \param cos RoPE cosine embeddings [1, total_len, 1, head_dim].
+   * \param sin RoPE sine embeddings [1, total_len, 1, head_dim].
+   * \param attention_mask The attention mask [1, 1, block_size, total_len].
+   * \return The output hidden states [1, block_size, hidden_size].
+   */
+  virtual ObjectRef DFlashDraftForward(const ObjectRef& draft_embeddings,
+                                       const ObjectRef& projected_target_hidden,
+                                       const ObjectRef& cos, const ObjectRef& sin,
+                                       const ObjectRef& attention_mask) = 0;
 
   /************** Debug/Profile **************/
 

@@ -100,12 +100,13 @@ class EngineConfig:
     kv_state_kind: Optional[Literal["kv_cache", "rnn_state"]]
         The kind of cache.
 
-    speculative_mode : Literal["disable", "small_draft", "eagle", "medusa"]
+    speculative_mode : Literal["disable", "small_draft", "eagle", "medusa", "dflash"]
         The speculative mode.
         "disable" means speculative decoding is disabled.
         "small_draft" means the normal speculative decoding (small draft) mode.
         "eagle" means the eagle-style speculative decoding.
         "medusa" means the medusa-style speculative decoding.
+        "dflash" means the DFlash block-diffusion speculative decoding.
 
     spec_draft_length : int
         The number of tokens to generate in speculative proposal (draft).
@@ -151,7 +152,7 @@ class EngineConfig:
     attention_sink_size: Optional[int] = None
     max_history_size: Optional[int] = None
     kv_state_kind: Optional[Literal["kv_cache", "rnn_state"]] = None
-    speculative_mode: Literal["disable", "small_draft", "eagle", "medusa"] = "disable"
+    speculative_mode: Literal["disable", "small_draft", "eagle", "medusa", "dflash"] = "disable"
     spec_draft_length: int = 0
     spec_tree_width: int = 1
     prefix_cache_mode: Literal["disable", "radix"] = "radix"
