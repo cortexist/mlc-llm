@@ -190,7 +190,7 @@ python scripts/bench_xavier_llama.py --output logs/llama-control.json
 
 ## Prior controlled results, before the native kernels
 
-**The completed DFlash port is slower than optimized plain MLC on Xavier.**
+**Before the native kernels, the completed DFlash port was slower than optimized plain MLC.**
 After the board restarted, the runtime was rebuilt and the final target library
 compiled successfully. Controlled comparisons ran sequentially with no competing
 compilation or inference: MAXN, fixed clocks, prefix cache disabled, context 8192,
@@ -219,9 +219,10 @@ to be ignored is useful for timing but produces artificial continuations.
 
 The earlier plain-engine fixes remain the useful result: short-chat performance
 rose from 11.90 to about 20.7 decode tok/s and 108 to about 209 prefill tok/s.
-The earlier llama.cpp+DFlash result remains faster at 24.5 decode tok/s, and
-llama.cpp remains preferable for the intended agent server. Those cross-engine
-figures use different quantization/tokenization and are not a matched rerun.
+At this stage, the earlier llama.cpp+DFlash result was faster at 24.5 decode
+tok/s, so we retained llama.cpp for the intended server. Those historical
+figures used different quantization/tokenization and were not a matched rerun;
+the fresh comparison above supersedes that performance conclusion.
 
 Evidence: `final-draft{0,1,2}.json`, `final-comparison.log` and
 `final-comparison-telemetry.jsonl` in the local recovery archive below.
