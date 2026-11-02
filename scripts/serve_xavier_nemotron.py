@@ -81,7 +81,7 @@ variant = os.environ.get("MLC_NEMOTRON_PREFILL", "hybrid")
 if variant != "baseline":
     from mlc_llm.op.xavier_prefill import install
 
-    receipt = install(variant)
+    receipt = install(variant, root / "dist/target-16k/mlc-chat-config.json")
 else:
     receipt = None
 mtp = None
@@ -99,7 +99,12 @@ if os.environ.get("MLC_EMBEDDINGGEMMA2") == "1":
 engine = AsyncMLCEngine(
     str(root / "dist/target-16k"),
     device="cuda",
-    model_lib=str(root / "dist/libs/target-dflash-dp4a-attn-16k-sm72.so"),
+    model_lib=str(
+        root
+        / os.environ.get(
+            "MLC_NEMOTRON_MODEL_LIB", "dist/libs/target-dflash-dp4a-attn-16k-sm72.so"
+        )
+    ),
     mode="interactive",
     engine_config=EngineConfig(
         additional_models=[

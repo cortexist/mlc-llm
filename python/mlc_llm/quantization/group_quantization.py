@@ -408,6 +408,11 @@ class GroupQuantizeLinear(nn.Module):
         if xavier.enabled(self.config):
             y = xavier.q4_linear(x, self.q_weight, self.q_scale, self.out_dtype)
             return y + self.bias if self.bias is not None else y
+        if xavier.dequant_enabled(self.config):
+            assert self.config.linear_weight_layout == "NK" and self.config.group_size == 32
+            w = xavier.dequant_weight(self.q_weight, self.q_scale)
+            y = nn.op.matmul(x, nn.op.permute_dims(w), out_dtype=self.out_dtype)
+            return y + self.bias if self.bias is not None else y
         w = nn.op.tensor_expr_op(
             lambda weight, scale: self.config._dequantize(
                 weight,

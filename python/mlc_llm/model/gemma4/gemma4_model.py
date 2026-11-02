@@ -425,6 +425,7 @@ class Gemma4ForConditionalGeneration(nn.Module):
             hidden_states = op.take(hidden_states, logit_positions, axis=1)
         return self.get_logits(hidden_states)
 
+    @xavier.prefill()
     def prefill_tokens(
         self,
         input_embeds: Tensor,
@@ -451,6 +452,7 @@ class Gemma4ForConditionalGeneration(nn.Module):
         )
         return logits, paged_kv_cache
 
+    @xavier.prefill()
     def batch_prefill_tokens(
         self,
         input_embeds: Tensor,
@@ -488,6 +490,7 @@ class Gemma4ForConditionalGeneration(nn.Module):
         logits = self._forward(input_embeds, paged_kv_cache, token_ids=token_ids)
         return logits, paged_kv_cache
 
+    @xavier.prefill()
     def batch_prefill_with_hidden_states(
         self,
         input_embeds: Tensor,

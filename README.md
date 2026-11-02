@@ -2,9 +2,20 @@
 
 This fork runs **NVIDIA Nemotron 3.5 Bolt E4B** on **Jetson AGX Xavier 32 GB**
 using JetPack 5 / CUDA 11.4. It adds DFlash speculative decoding and kernels
-suited to Xavier's Volta GPU. The fastest measured configuration reaches
+suited to Xavier's Volta GPU. The November 1 full-request benchmark reaches
 **395 tok/s prefill at 448 tokens**, **279 tok/s at 1,768 tokens**, and roughly
 **31–34 tok/s decode**.
+
+The November 2 [layer-aware prefill follow-up](docs/deploy/xavier_prefill_followup.md)
+reaches **449 tok/s at 448 tokens** and **372 tok/s at 910 tokens**, improving
+the corresponding 16K-context controls by **13% and 12%**. This is a separate
+short-output experiment; the historical tables below retain their original protocol.
+
+The subsequent [weight-expansion and GEMM experiment](docs/deploy/xavier_prefill_linear.md)
+reaches **327 / 520 / 416 tok/s** at **161 / 448 / 910 prompt tokens**.
+Vectorized Q4 expansion improves matched controls by **28% / 15% / 11%**
+and is enabled in the service. Separate, shape-specific dense GEMM tuning
+adds only **0.6–3.1%** in short trials and remains experimental.
 
 Based on upstream MLC-LLM `44fd06d0`. DFlash builds on
 [Lev Stambler's implementation](https://github.com/Lev-Stambler/mlc-llm--DFlash/tree/b6c7bf7d269fd4127fd1a48c478b01d9dc8ff42b).
@@ -120,7 +131,7 @@ compatibility investigation; these plain rates do not include speculative decodi
 - **Resident model routing:** Nemotron shares one authenticated endpoint and
   FIFO GPU queue with either 12B + MTP or EmbeddingGemma 2 text embeddings;
   see the [resident switching PoC](docs/deploy/xavier_embedding_switch_poc.md).
-- **Faster projections:** one-token GEMV specialization; FP16 dequantization +
+- **Faster projections:** one-token GEMV specialization; vectorized Q4-to-FP16 expansion +
   cuBLAS for large prefill; native DP4A/Q8-activation kernels for 1–4 rows.
 - **DFlash execution:** target feature extraction, GPU greedy selection, cached
   draft K/V, bounded context attention, FP32 residual fixes and CUDA graphs.

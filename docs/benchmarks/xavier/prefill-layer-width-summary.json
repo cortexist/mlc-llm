@@ -1,0 +1,93 @@
+{
+  "model": "Nemotron 3.5 Bolt E4B q4f16_1 + two DFlash proposals",
+  "context": 16384,
+  "prefill_chunk": 512,
+  "order": [
+    "control-before",
+    "layer-width-confirm",
+    "control-after"
+  ],
+  "warmups_per_case": 1,
+  "measured_repeats_per_case_per_arm": 2,
+  "forced_output_tokens": 16,
+  "cases": {
+    "chat": {
+      "prompt_tokens": 161,
+      "arms": {
+        "control-before": {
+          "prefill_tok_s": 242.3950454423605,
+          "ttft_s": 0.6671399064980505,
+          "decode_tok_s": 25.769570951843665
+        },
+        "layer-width-confirm": {
+          "prefill_tok_s": 253.52543675125602,
+          "ttft_s": 0.6382557549986814,
+          "decode_tok_s": 26.528318290899847
+        },
+        "control-after": {
+          "prefill_tok_s": 248.09290789509146,
+          "ttft_s": 0.6523309689982852,
+          "decode_tok_s": 26.516363379907965
+        }
+      },
+      "pooled_control_prefill_tok_s": 245.24397666872596,
+      "candidate_prefill_tok_s": 253.52543675125602,
+      "speedup": 1.0337682506825299,
+      "all_six_outputs_identical": true
+    },
+    "448": {
+      "prompt_tokens": 448,
+      "arms": {
+        "control-before": {
+          "prefill_tok_s": 397.39875422463797,
+          "ttft_s": 1.1316830114992626,
+          "decode_tok_s": 21.392120427349347
+        },
+        "layer-width-confirm": {
+          "prefill_tok_s": 449.4105215360322,
+          "ttft_s": 1.0011573525007407,
+          "decode_tok_s": 21.590586738468986
+        },
+        "control-after": {
+          "prefill_tok_s": 397.0810669418894,
+          "ttft_s": 1.1325694965016737,
+          "decode_tok_s": 21.544164001566664
+        }
+      },
+      "pooled_control_prefill_tok_s": 397.2399105832637,
+      "candidate_prefill_tok_s": 449.4105215360322,
+      "speedup": 1.1313327527341523,
+      "all_six_outputs_identical": true
+    },
+    "910": {
+      "prompt_tokens": 910,
+      "arms": {
+        "control-before": {
+          "prefill_tok_s": 330.7488358709072,
+          "ttft_s": 2.7567464109997672,
+          "decode_tok_s": 32.48069748603813
+        },
+        "layer-width-confirm": {
+          "prefill_tok_s": 372.4396790541495,
+          "ttft_s": 2.448394727998675,
+          "decode_tok_s": 32.911922674935354
+        },
+        "control-after": {
+          "prefill_tok_s": 334.7761479951156,
+          "ttft_s": 2.7235107569977117,
+          "decode_tok_s": 32.88130674381904
+        }
+      },
+      "pooled_control_prefill_tok_s": 332.7624919330114,
+      "candidate_prefill_tok_s": 372.4396790541495,
+      "speedup": 1.1192357554802947,
+      "all_six_outputs_identical": true
+    }
+  },
+  "numerical_validation": {
+    "normal_fixtures": 16,
+    "unit_scale_fixtures": 8,
+    "max_stress_absolute_error": 0.001953125,
+    "scope_exception_and_unknown_layer_fallback": "passed"
+  }
+}

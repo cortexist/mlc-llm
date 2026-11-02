@@ -3,6 +3,7 @@
 import ast
 import importlib.util
 import inspect
+import json
 import sys
 from pathlib import Path
 
@@ -109,11 +110,12 @@ def build_tir(variant):
     return output
 
 
-def install(variant):
+def install(variant, target_config=None):
     """Intercept cache construction once; all per-layer callbacks remain native."""
-    assert variant in ("bounds", "width", "wmma", "hybrid")
+    assert variant in ("bounds", "width", "wmma", "hybrid", "hybrid-width")
     native = tvm_ffi.load_module(str(ROOT / "dist/prefill-experiments/native.so"))
-    tir_variant = "width" if variant == "hybrid" else variant
+    hybrid = variant in ("hybrid", "hybrid-width")
+    tir_variant = "width" if hybrid else variant
     module = (
         native
         if variant == "wmma"
@@ -122,16 +124,42 @@ def install(variant):
     key = "vm.builtin.paged_attention_kv_cache_create"
     original = tvm_ffi.get_global_func(key)
     receipt = {"variant": variant, "target_caches": 0}
+    if variant == "hybrid-width":
+        path = Path(target_config or ROOT / "dist/target-16k/mlc-chat-config.json")
+        config = json.loads(path.read_text())["model_config"]["text_config"]
+        assert (
+            config["num_attention_heads"],
+            config["num_key_value_heads"],
+            config["head_dim"],
+            config["global_head_dim"],
+        ) == (8, 2, 256, 512)
+        layers = config["layer_types"]
+        physical_layers = config["num_hidden_layers"] - config["num_kv_shared_layers"]
+        assert len(layers) == config["num_hidden_layers"] and physical_layers > 0
+        assert set(layers) <= {"sliding_attention", "full_attention"}
+        layout = "".join("l" if x == "sliding_attention" else "g" for x in layers[:physical_layers])
+        receipt["physical_layer_layout"] = layout
+        for suffix in ("attention_with_fused_qkv", "attention_with_shared_kv", "self_attention"):
+            name = "vm.builtin.attention_kv_cache_" + suffix
+            fn = tvm_ffi.get_global_func(name)
+            tvm_ffi.register_global_func(
+                name, native["wrap_layer_width"](fn, layout), override=True
+            )
 
     def create(*args):
         args = list(args)
         if tuple(map(int, args[2:6])) == (8, 2, 512, 512):
             assert len(args) in (28, 29) and int(args[0][5]) == 512 and int(args[8]) == 0
+            if variant == "hybrid-width":
+                assert tuple(map(int, args[1])) == (0, physical_layers)
+                assert int(args[0][2]) <= config["sliding_window"] == 512
             for index, name in ((15, "ragged"), (16, "paged0"), (18, "paged1")):
                 old = args[index]
                 assert len(old) == 2 and str(old[0]) == "tirx"
-                clear = int(variant in ("width", "hybrid") and index == 18)
-                candidate = native[name] if variant == "hybrid" and index == 15 else module[name]
+                clear = int((variant == "width" or hybrid) and index == 18)
+                candidate = native[name] if hybrid and index == 15 else module[name]
+                if variant == "hybrid-width" and index == 15:
+                    candidate = native["ragged_layer_width"]
                 wrapped = native["wrap_prefill"](old[1], candidate, clear, 7 if index == 15 else 8)
                 args[index] = tvm_ffi.convert([old[0], wrapped])
             receipt["target_caches"] += 1

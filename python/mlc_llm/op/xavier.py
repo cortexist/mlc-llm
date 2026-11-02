@@ -1,4 +1,4 @@
-"""Opt-in sm_72 small-batch kernels, with the original checkpoint weight layout."""
+"""Opt-in sm_72 projection kernels, with the original checkpoint weight layout."""
 
 import os
 from contextlib import contextmanager
@@ -9,6 +9,7 @@ from tvm.relax.frontend import nn
 from tvm.relax.frontend.nn.exporter import Exporter
 
 _ACTIVE = ContextVar("xavier_small_batch", default=False)
+_PREFILL = ContextVar("xavier_prefill", default=False)
 
 
 @contextmanager
@@ -22,6 +23,48 @@ def small_batch():
 
 def enabled(config):
     return _ACTIVE.get() and config.name == "q4f16_1"
+
+
+@contextmanager
+def prefill():
+    token = _PREFILL.set(os.environ.get("MLC_XAVIER_DEQUANT") == "1")
+    try:
+        yield
+    finally:
+        _PREFILL.reset(token)
+
+
+def dequant_enabled(config):
+    return _PREFILL.get() and not _ACTIVE.get() and config.name == "q4f16_1"
+
+
+def dequant_weight(weight, scale):
+    """Vectorized expansion; retain the existing FP16 weights and BLAS arithmetic."""
+    from .extern import get_store
+
+    target = get_store().target
+    if target is not None and (target.kind.name != "cuda" or target.attrs.get("arch") != "sm_72"):
+        raise ValueError("MLC_XAVIER_DEQUANT is restricted to sm_72")
+    exporter = Exporter.current()
+    if not hasattr(exporter, "_xavier_dequant"):
+        module = nn.SourceModule(
+            {
+                "xavier_dequant": lambda w, s: nn.Tensor.placeholder(
+                    (w.shape[0], w.shape[1] * 8), "float16"
+                )
+            },
+            Path(__file__).parent / "cuda/xavier_dequant.cu",
+            "cu",
+            compile_options=[*nn.SourceModule.get_compile_options("cu"), "-arch=sm_72"],
+            compiler="nvcc",
+        )
+        nn.add_extern(module)
+        exporter._xavier_dequant = module
+    return nn.op.extern(
+        "xavier_dequant",
+        args=[weight, scale],
+        out=nn.Tensor.placeholder((weight.shape[0], weight.shape[1] * 8), "float16"),
+    )
 
 
 def q4_linear(x, weight, scale, out_dtype=None):

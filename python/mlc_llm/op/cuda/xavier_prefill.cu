@@ -5,9 +5,29 @@
 #include <tvm/ffi/function.h>
 
 #include <stdexcept>
+#include <string>
 
 #include "xavier_prefill_kernel.cuh"
 namespace {
+// The cache callback omits layer identity. Carry it through the synchronous
+// host-side attention entrypoint; GPU launches remain asynchronous.
+thread_local int ragged_width = 512;
+struct WidthScope {
+  int previous;
+  explicit WidthScope(int width) : previous(ragged_width) { ragged_width = width; }
+  ~WidthScope() { ragged_width = previous; }
+};
+tvm::ffi::Function wrap_layer_width(tvm::ffi::Function original, std::string layout) {
+  for (char c : layout)
+    if (c != 'l' && c != 'g') throw std::runtime_error("Invalid attention layer layout");
+  return tvm::ffi::Function::FromPacked(
+      [original, layout](tvm::ffi::PackedArgs args, tvm::ffi::Any* result) {
+        int64_t layer = args[1].cast<int64_t>();
+        WidthScope scope(layer >= 0 && layer < static_cast<int64_t>(layout.size()) &&
+                                 layout[layer] == 'l' ? 256 : 512);
+        original.CallPacked(args, result);
+      });
+}
 void* tensor_data(DLTensor* t) { return static_cast<char*>(t->data) + t->byte_offset; }
 tvm::ffi::Function wrap_prefill(tvm::ffi::Function small, tvm::ffi::Function large, int64_t clear,
                                 int64_t output_index) {
@@ -30,9 +50,10 @@ tvm::ffi::Function wrap_prefill(tvm::ffi::Function small, tvm::ffi::Function lar
 }
 }  // namespace
 TVM_FFI_DLL_EXPORT_TYPED_FUNC(wrap_prefill, wrap_prefill);
+TVM_FFI_DLL_EXPORT_TYPED_FUNC(wrap_layer_width, wrap_layer_width);
 
 namespace {
-template <bool Paged, bool Local>
+template <bool Paged, bool Local, int D = (Local ? 256 : 512)>
 void launch_prefill(DLTensor* q, DLTensor* qi, DLTensor* k, DLTensor* v, DLTensor* ki, DLTensor* pv,
                     DLTensor* length, DLTensor* output, DLTensor* lse, int64_t causal,
                     int64_t rotary, double scale) {
@@ -43,7 +64,7 @@ void launch_prefill(DLTensor* q, DLTensor* qi, DLTensor* k, DLTensor* v, DLTenso
   int batch = qi->shape[0] - 1;
   dim3 grid((q->shape[0] + 15) / 16 + batch - 1, q->shape[1]);
   auto stream = static_cast<cudaStream_t>(TVMFFIEnvGetStream(kDLCUDA, q->device.device_id));
-  xavier_prefill::attention<Local ? 256 : 512, Paged, Local><<<grid, 128, 0, stream>>>(
+  xavier_prefill::attention<D, Paged, Local><<<grid, 128, 0, stream>>>(
       static_cast<half*>(tensor_data(q)), static_cast<int*>(tensor_data(qi)),
       static_cast<half*>(tensor_data(k)), v ? static_cast<half*>(tensor_data(v)) : nullptr,
       static_cast<int*>(tensor_data(ki)), pv ? static_cast<int*>(tensor_data(pv)) : nullptr,
@@ -67,7 +88,19 @@ void ragged_prefill(DLTensor* q, DLTensor* qi, DLTensor* k, DLTensor* v, DLTenso
   launch_prefill<false, false>(q, qi, k, v, ki, nullptr, nullptr, output, lse, causal, rotary,
                                scale);
 }
+void ragged_layer_width(DLTensor* q, DLTensor* qi, DLTensor* k, DLTensor* v, DLTensor* ki,
+                        DLTensor* qpos, DLTensor* kpos, DLTensor* output, DLTensor* lse,
+                        int64_t causal, int64_t rotary, double rope_scale, double theta,
+                        double scale) {
+  if (ragged_width == 256)
+    launch_prefill<false, false, 256>(q, qi, k, v, ki, nullptr, nullptr, output, lse,
+                                     causal, rotary, scale);
+  else
+    ragged_prefill(q, qi, k, v, ki, qpos, kpos, output, lse, causal, rotary,
+                  rope_scale, theta, scale);
+}
 }  // namespace
 TVM_FFI_DLL_EXPORT_TYPED_FUNC(paged0, paged_prefill<false>);
 TVM_FFI_DLL_EXPORT_TYPED_FUNC(paged1, paged_prefill<true>);
 TVM_FFI_DLL_EXPORT_TYPED_FUNC(ragged, ragged_prefill);
+TVM_FFI_DLL_EXPORT_TYPED_FUNC(ragged_layer_width, ragged_layer_width);

@@ -32,7 +32,7 @@ parser.add_argument("--allow-eos", action="store_true")
 parser.add_argument("--output", required=True)
 parser.add_argument(
     "--prefill-variant",
-    choices=["baseline", "bounds", "width", "wmma", "hybrid"],
+    choices=["baseline", "bounds", "width", "wmma", "hybrid", "hybrid-width"],
     default="baseline",
 )
 args = parser.parse_args()
@@ -42,6 +42,7 @@ assert Path(_LIB_PATH).resolve().is_relative_to(root / "build"), _LIB_PATH
 prompts = {
     "chat": DESIGN_NOTE,
     "448": "Read this and reply with one word.\n" + FILLER * 13,
+    "910": "Read this and reply with one word.\n" + FILLER * 27,
     "1768": "Read this and reply with one word.\n" + FILLER * 53,
     "short": "What is 17 multiplied by 23? Give only the number.",
 }
@@ -73,7 +74,7 @@ prefill_receipt = None
 if args.prefill_variant != "baseline":
     from mlc_llm.op.xavier_prefill import install
 
-    prefill_receipt = install(args.prefill_variant)
+    prefill_receipt = install(args.prefill_variant, root / args.target / "mlc-chat-config.json")
 engine = MLCEngine(
     str(root / args.target),
     model_lib=str(root / args.target_lib),

@@ -16,6 +16,7 @@ from mlc_llm.op.xavier_prefill import ROOT, TARGET
 p = argparse.ArgumentParser()
 p.add_argument("--output", required=True)
 p.add_argument("--stress", action="store_true", help="Unit-scale Q/K/V and small-batch fallback")
+p.add_argument("--layer-width", action="store_true", help="Check layer-aware ragged widths")
 a = p.parse_args()
 fns = {"ragged": _attention_prefill_ragged(2, 8, 512, 512, "float16", {}, TARGET)}
 for local in (0, 1):
@@ -32,6 +33,7 @@ modules["wmma"] = native
 rng = np.random.default_rng(9331)
 dev = tvm_tirx.cuda(0)
 results = []
+wide_fixture = None
 
 
 def tensor(x):
@@ -68,10 +70,16 @@ if a.stress:
     ]
 input_std = 1.0 if a.stress else 0.2
 output_atol = 0.002 if a.stress else 0.00025
+if a.layer_width:
+    cases = [case for case in cases if case[0] == "ragged"]
+    cases += [("ragged256", *case[1:]) for case in list(cases)]
 for name, rows_list, contexts, offset, sink, causal, scale in cases:
+    narrow_ragged = name == "ragged256"
+    if narrow_ragged:
+        name = "ragged"
     local = name == "paged1"
     paged = name != "ragged"
-    width = 256 if local else 512
+    width = 256 if local or narrow_ragged else 512
     batch = len(rows_list)
     rows = sum(rows_list)
     qptr = np.array([0, *np.cumsum(rows_list)], "int32")
@@ -170,6 +178,8 @@ for name, rows_list, contexts, offset, sink, causal, scale in cases:
     ref[name](*inputs)
     baseline = qo.numpy()
     baseline_lse = lseo.numpy()
+    if a.layer_width and not narrow_ragged and rows > 4 and all(contexts):
+        wide_fixture = (inputs, baseline, baseline_lse)
     record = dict(
         kind=name,
         queries=rows_list,
@@ -178,13 +188,28 @@ for name, rows_list, contexts, offset, sink, causal, scale in cases:
         sink=sink,
         causal=causal,
         scale=scale,
+        logical_width=width,
         baseline_ms=timing(ref[name], inputs),
         variants={},
     )
-    for variant, module in modules.items():
+    candidates = {"hybrid-width": native} if a.layer_width else modules
+    for variant, module in candidates.items():
         fn = native["wrap_prefill"](
-            ref[name], module[name], int(variant == "width" and local), 8 if paged else 7
+            ref[name],
+            module["ragged_layer_width"] if a.layer_width else module[name],
+            int(variant == "width" and local),
+            8 if paged else 7,
         )
+        if a.layer_width:
+            unscoped = fn
+            # Reproduce the layer-id entrypoint that invokes the ragged callback.
+            scoped = native["wrap_layer_width"](
+                tvm_ffi.convert(lambda _cache, _layer: unscoped(*inputs)), "lg"
+            )
+
+            def fn(*unused):
+                return scoped(0, 0 if narrow_ragged else 1)
+
         fn(*inputs)
         output = qo.numpy()
         lse = lseo.numpy()
@@ -219,3 +244,27 @@ for name, rows_list, contexts, offset, sink, causal, scale in cases:
     results.append(record)
     Path(a.output).write_text(json.dumps(results, indent=2) + "\n")
     print(json.dumps(record), flush=True)
+
+if a.layer_width:
+    # Scope state must not leak into a later global call, including exceptions.
+    inputs, expected, expected_lse = wide_fixture
+
+    def fail(_cache, _layer):
+        raise RuntimeError("deliberate scope unwind")
+
+    wrapped = native["wrap_layer_width"](tvm_ffi.convert(fail), "lg")
+    try:
+        wrapped(0, 0)
+    except Exception as error:
+        assert "deliberate scope unwind" in str(error)
+    else:
+        raise AssertionError("Expected scope test exception")
+    native["ragged_layer_width"](*inputs)
+    np.testing.assert_allclose(inputs[7].numpy(), expected, rtol=0.006, atol=output_atol)
+    np.testing.assert_allclose(inputs[8].numpy(), expected_lse, rtol=2e-5, atol=0.0004)
+    unknown = native["wrap_layer_width"](
+        tvm_ffi.convert(lambda _cache, _layer: native["ragged_layer_width"](*inputs)), "lg"
+    )
+    unknown(0, 100)
+    np.testing.assert_allclose(inputs[7].numpy(), expected, rtol=0.006, atol=output_atol)
+    print("Layer scope unwind and unknown-layer fallback passed", flush=True)

@@ -78,10 +78,23 @@ tailnet clients, and passes streaming responses without buffering. Public IPv6
 clients are denied. No router port forwarding or Tailscale Funnel is configured.
 
 The model configuration is the measured Nemotron target, F16 DFlash draft,
-two proposals (`spec_draft_length=3`), `hybrid` prefill, one active sequence,
+two proposals (`spec_draft_length=3`), `hybrid-width` prefill via the optional
+`prefill-width.conf` drop-in, one active sequence,
 16K context and prefix caching disabled. Multiple HTTP clients can queue
 requests. The service restarts on failure, with a bounded restart rate.
 Nginx, MLC and tailscaled are enabled at boot.
+
+The [November 2 prefill follow-up](../../docs/deploy/xavier_prefill_followup.md)
+documents the native rebuild, checks and rollback to the base unit's `hybrid`
+variant. The new variant changes local current-chunk attention width; weights,
+context capacity and small-batch decode/verification kernels are retained.
+
+The [weight-expansion follow-up](../../docs/deploy/xavier_prefill_linear.md)
+adds `prefill-linear.conf`, selecting the vectorized Q4 expansion target via
+`MLC_NEMOTRON_MODEL_LIB`. It improves matched prefill rates by 11–28%.
+Build and validate the library before installing the drop-in. Removing this
+drop-in restores the old target library; the attention-width setting remains.
+The separate dense GEMM selection experiment is not enabled in the service.
 
 `mlc-nemotron.service.d/dual-model.conf` sets `MLC_GEMMA4_MTP=1`, enabling the
 second resident target/assistant and an arithmetic startup check. The API
