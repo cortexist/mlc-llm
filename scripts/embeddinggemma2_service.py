@@ -130,8 +130,8 @@ class ResidentEmbedding:
         return fastapi.responses.JSONResponse(
             payload,
             headers={
-                "X-Cerebellum-Embedding-Inference-Ms": str(metrics["inference_ms"]),
-                "X-Cerebellum-Embedding-Total-Ms": str(metrics["total_ms"]),
-                "X-Cerebellum-Embedding-Instance": self.instance,
+                "X-Xavier-Embedding-Inference-Ms": str(metrics["inference_ms"]),
+                "X-Xavier-Embedding-Total-Ms": str(metrics["total_ms"]),
+                "X-Xavier-Embedding-Instance": self.instance,
             },
         )

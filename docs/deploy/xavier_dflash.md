@@ -1,4 +1,4 @@
-# DFlash on cerebellum: experimental port and optimization record
+# DFlash on xavier: experimental port and optimization record
 
 Measured on 2026-11-01. This branch ports
 [Lev Stambler's DFlash implementation](https://github.com/Lev-Stambler/mlc-llm--DFlash/tree/b6c7bf7d269fd4127fd1a48c478b01d9dc8ff42b)
@@ -482,20 +482,20 @@ retain the original MAXN clocks for comparability but do not overlap compilation
 No power-limit, boot, PCIe, or persistent fan configuration was changed.
 
 Evidence is archived locally under
-`~/Workspaces/cerebellum-llm-bench/mlc-jp5/logs/dflash/recovery-20261031/`, including the preceding journal,
+`~/Workspaces/xavier-llm-bench/mlc-jp5/logs/dflash/recovery-20261031/`, including the preceding journal,
 new boot kernel log, fan test, and live telemetry. The pre-recovery experiment
-logs are copied under `~/Workspaces/cerebellum-llm-bench/mlc-jp5/logs/dflash/remote-before-recovery/`.
+logs are copied under `~/Workspaces/xavier-llm-bench/mlc-jp5/logs/dflash/remote-before-recovery/`.
 
 Reference: NVIDIA's [power/thermal management documentation](https://docs.nvidia.com/jetson/archives/r35.6.0/DeveloperGuide/SD/PlatformPowerAndPerformance/JetsonXavierNxSeriesAndJetsonAgxXavierSeries.html)
 describes separate software and hardware thermal shutdown mechanisms. The dev
 kit's original [65 W supply specification](https://forums.developer.nvidia.com/t/agx-power-adapter/83776)
 also means that a 65 W label alone is not evidence of an inadequate supply.
 
-## Reproduce on cerebellum
+## Reproduce on xavier
 
 The source lives at `~/Workspaces/mlc-dflash-work`; it uses the existing pinned
 JetPack-5-compatible dependencies and environment from `~/Workspaces/mlc-jp5`.
-The local review copy is `~/Workspaces/cerebellum-llm-bench/mlc-dflash-work`.
+The local review copy is `~/Workspaces/xavier-llm-bench/mlc-dflash-work`.
 
 ```bash
 cd ~/Workspaces/mlc-dflash-work

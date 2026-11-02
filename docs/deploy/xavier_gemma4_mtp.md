@@ -3,7 +3,7 @@
 The fork can convert and compile the original
 `Gemma4UnifiedAssistantForCausalLM` checkpoint, separately from DFlash.
 This is an experimental direct-VM driver, not an `MLCEngine` speculative mode.
-An optional [HTTP adapter](../../deploy/cerebellum/README.md) serves it as
+An optional [HTTP adapter](../../deploy/xavier/README.md) serves it as
 `gemma4-12b` alongside resident Nemotron, with one shared generation queue. The deployed contexts are 16K Nemotron and 4K 12B.
 Nemotron continues to use its existing DFlash path.
 
@@ -126,11 +126,11 @@ The reference check requires a Transformers version containing the Unified
 assistant (tested with 5.22.1) and CPU PyTorch. No reference weights or inference
 implementation are loaded from remote code.
 
-Cerebellum runs MAXN/fixed clocks. During this experiment its persistent fan
+Xavier runs MAXN/fixed clocks. During this experiment its persistent fan
 profile changed from `quiet` to `cool`; `pid` and `open_loop` were retained.
 The known power-supply issue remains deferred. Logs are retained in
-`~/Workspaces/cerebellum-llm-bench/mlc-jp5/logs/gemma4-mtp-20261101` on nowhere
-and `~/Workspaces/mlc-dflash-work/logs/gemma4-mtp-20261101` on cerebellum.
+`~/Workspaces/xavier-llm-bench/mlc-jp5/logs/gemma4-mtp-20261101` on benchmark-client
+and `~/Workspaces/mlc-dflash-work/logs/gemma4-mtp-20261101` on xavier.
 
 
 ## Extended context and tools

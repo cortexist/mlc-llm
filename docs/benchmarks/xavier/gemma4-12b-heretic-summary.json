@@ -1,6 +1,7 @@
 {
+  "publication_note": "Hostnames, network addresses and host-derived metadata are anonymized; numerical benchmark measurements are unchanged.",
   "date": "2026-11-01",
-  "device": "cerebellum, Jetson AGX Xavier 32 GB",
+  "device": "xavier, Jetson AGX Xavier 32 GB",
   "model": "gemma-4-12B-IT-QAT-Q4_0-unquantized-heretic",
   "quantization": "q4f16_1",
   "context_size": 4096,

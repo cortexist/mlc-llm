@@ -1,6 +1,7 @@
 {
+  "publication_note": "Hostnames, network addresses and host-derived metadata are anonymized; numerical benchmark measurements are unchanged.",
   "date": "2026-11-01",
-  "device": "cerebellum / Jetson AGX Xavier 32GB",
+  "device": "xavier / Jetson AGX Xavier 32GB",
   "jetpack": "5.1.8",
   "cuda": "11.4",
   "power": "MAXN / fixed clocks / cool fan",
@@ -28,10 +29,10 @@
       "Content-Type": "application/json",
       "Content-Length": "65473",
       "Connection": "close",
-      "x-cerebellum-embedding-inference-ms": "167.954177999718",
-      "x-cerebellum-embedding-total-ms": "176.1692050001784",
-      "x-cerebellum-embedding-instance": "ed9bb22c17b2420dbc7889c6e3ac804b",
-      "x-cerebellum-queue-wait-ms": "0"
+      "x-xavier-embedding-inference-ms": "167.954177999718",
+      "x-xavier-embedding-total-ms": "176.1692050001784",
+      "x-xavier-embedding-instance": "ed9bb22c17b2420dbc7889c6e3ac804b",
+      "x-xavier-queue-wait-ms": "0"
     },
     "query_relevant": 0.8998286822896783,
     "query_unrelated": 0.5432091348747425

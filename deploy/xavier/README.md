@@ -1,4 +1,9 @@
-# Resident model HTTPS service on cerebellum
+# Resident model HTTPS service on Xavier
+
+Hostnames, addresses and machine-specific paths below are examples. Replace
+`xavier.example.com`, `192.0.2.10`, the tailnet address and SSH aliases with your
+own values. Historical network identifiers are anonymized in public summaries;
+benchmark measurements are unchanged.
 
 The optional **embedding switching PoC** profile is currently active: resident
 `nemotron` chat and `embeddinggemma-2` text embeddings share the same GPU queue.
@@ -6,14 +11,14 @@ The 12B worker is unloaded by `embedding-poc.conf`; its artifacts and the base
 dual-chat configuration below are retained. See the
 [PoC measurements, API and restore instructions](../../docs/deploy/xavier_embedding_switch_poc.md).
 
-The deployed OpenAI-compatible API is **`https://cerebellum.lan/v1`**, with
+The deployed OpenAI-compatible API is **`https://xavier.example.com/v1`**, with
 model IDs **`nemotron`** and **`gemma4-12b`**. `/healthz` reports readiness. Model listing and
 generation require `Authorization: Bearer <API key>`.
 
 Both targets and their assistants stay resident. Select the model in each
 chat request; switching does not unload/reload weights. One shared FIFO queue
 serializes complete generations across both models, including streaming and
-Nemotron tool calls. `X-Cerebellum-Queue-Wait-Ms` reports time spent waiting.
+Nemotron tool calls. `X-Xavier-Queue-Wait-Ms` reports time spent waiting.
 The existing Pi default remains Nemotron.
 The existing `nemotron:e4b` client ID is also accepted as a Nemotron alias.
 
@@ -34,35 +39,34 @@ it does not add an `MLCEngine` MTP speculative mode. See
 
 ## Access from clients
 
-- On the LAN, the router resolves `cerebellum.lan` to `192.168.12.115`.
+- On the LAN, the router resolves `xavier.example.com` to `192.0.2.10`.
 - On the existing Headscale tailnet, MagicDNS's extra record resolves the same
-  name to `100.64.0.4`. Enable Tailscale DNS on the client. Cerebellum itself
+  name to `100.64.0.10`. Enable Tailscale DNS on the client. Xavier itself
   retains LAN DNS with `--accept-dns=false`.
-- Clients must trust `nowhere:~/LocalAuthority/local-ca.crt`, or pass that file
-  as their CA bundle. The existing CA permits `.lan`, LAN addresses and
-  loopback; it excludes the tailnet suffix and Tailscale IP SANs. Always use
-  `cerebellum.lan` as the HTTPS hostname over the tailnet.
+- Clients must trust their local CA certificate, or pass that file as their CA
+  bundle. Ensure the CA's name constraints permit your chosen hostname and
+  the leaf certificate includes it. Use the same hostname over the tailnet.
 - The API key is stored with mode 0600 at
-  `nowhere:~/.config/cerebellum/api-key` and
-  `cerebellum:~/.config/mlc-nemotron/api-key`. Copy it securely to authorized
+  `benchmark-client:~/.config/xavier/api-key` and
+  `xavier:~/.config/mlc-nemotron/api-key`. Copy it securely to authorized
   clients; keep it out of source control.
 
 On a client with the root certificate and key file copied locally:
 
 ```bash
-export CEREBELLUM_API_KEY="$(cat ~/.config/cerebellum/api-key)"
-curl --cacert ./local-ca.crt https://cerebellum.lan/v1/models \
-  -H "Authorization: Bearer $CEREBELLUM_API_KEY"
-curl -N --cacert ./local-ca.crt https://cerebellum.lan/v1/chat/completions \
-  -H "Authorization: Bearer $CEREBELLUM_API_KEY" \
+export XAVIER_API_KEY="$(cat ~/.config/xavier/api-key)"
+curl --cacert ./local-ca.crt https://xavier.example.com/v1/models \
+  -H "Authorization: Bearer $XAVIER_API_KEY"
+curl -N --cacert ./local-ca.crt https://xavier.example.com/v1/chat/completions \
+  -H "Authorization: Bearer $XAVIER_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"model":"nemotron","messages":[{"role":"user","content":"Say hello."}],"max_tokens":128,"stream":true}'
 ```
 
-For an SDK or application, set its base URL to `https://cerebellum.lan/v1`,
+For an SDK or application, set its base URL to `https://xavier.example.com/v1`,
 its model to `nemotron` or `gemma4-12b`, and its API key to the saved key. Configure its TLS
 trust store with the local CA. An explicit tailnet connectivity test can use
-`curl --resolve cerebellum.lan:443:100.64.0.4` with the same CA and credentials.
+`curl --resolve xavier.example.com:443:100.64.0.10` with the same CA and credentials.
 
 ## Installed services
 
@@ -95,7 +99,7 @@ to the deployed checkout, then install the drop-in:
 
 ```bash
 sudo install -d /etc/systemd/system/mlc-nemotron.service.d
-sudo install -m 644 deploy/cerebellum/dual-model.conf \
+sudo install -m 644 deploy/xavier/dual-model.conf \
   /etc/systemd/system/mlc-nemotron.service.d/dual-model.conf
 sudo systemctl daemon-reload
 sudo systemctl restart mlc-nemotron
@@ -111,21 +115,21 @@ Generation defaults to `temperature: 0`. Explicit nonzero temperatures or
 sampler is qualified for greedy, single-output requests. Non-greedy sampling
 can otherwise terminate its background worker.
 
-### Pi on nowhere
+### Pi on benchmark-client
 
-`~/.pi/agent/models.json` registers `cerebellum/nemotron:e4b`, reads the API key
+`~/.pi/agent/models.json` registers `xavier/nemotron:e4b`, reads the API key
 from the private credential file, and declares the 16384-token context and
-2048-token output limit. `~/.pi/agent/bin/pi-cerebellum` selects it and loads
+2048-token output limit. `~/.pi/agent/bin/pi-xavier` selects it and loads
 the system trust store through `NODE_USE_SYSTEM_CA=1` before Node starts:
 
 ```bash
-pi-cerebellum
+pi-xavier
 # Or select the provider directly:
 NODE_USE_SYSTEM_CA=1 \
-  pi --provider cerebellum --model nemotron:e4b --thinking off
+  pi --provider xavier --model nemotron:e4b --thinking off
 ```
 
-On nowhere, the root is installed at
+On benchmark-client, the root is installed at
 `/etc/ca-certificates/trust-source/anchors/local-ca.crt` and extracted by
 `sudo update-ca-trust`. `/etc/environment` and
 `/etc/profile.d/local-node-system-ca.sh` enable Node system-store trust for new
@@ -134,7 +138,7 @@ applications maintain independent trust stores and need their own configuration.
 
 Pi uses `openai-completions`, bearer authentication, `max_tokens`, system-role
 messages and greedy sampling. Its per-model compaction settings reserve 2048
-tokens and keep 4096 recent tokens. The default provider is `cerebellum` and the default client model is
+tokens and keep 4096 recent tokens. The default provider is `xavier` and the default client model is
 `nemotron:e4b`. The `pi-llama-cpp` package remains installed with
 `extensions: []`, suppressing its independent localhost:9931 startup probe;
 re-enable it through `pi config` when using that integration. The ordinary Pi
@@ -143,9 +147,9 @@ Tools are enabled: the launcher has no `--no-tools` flag and the model's
 `samplingParams` contains `temperature: 0, top_p: 1` without `tool_choice: none`.
 Start a new Pi process after changing its model configuration.
 
-`models.json` also registers `cerebellum/gemma4-12b` (4,096 context, 512 output
+`models.json` also registers `xavier/gemma4-12b` (4,096 context, 512 output
 tokens), with compaction reserve/retention of 768/1024. Reopen `/model` to reload
-Pi's local registry. Nemotron remains the default. For a fresh 12B session on nowhere:
+Pi's local registry. Nemotron remains the default. For a fresh 12B session on benchmark-client:
 
 ```bash
 ~/.pi/agent/bin/pi-gemma4
@@ -209,9 +213,9 @@ ordinary tools and workspace context read a local file and returned its exact
 random proof word. No file contents were included in the user's test prompt.
 
 ```bash
-ssh cerebellum 'sudo systemctl status mlc-nemotron nginx tailscaled'
-ssh cerebellum 'sudo journalctl -u mlc-nemotron -f'
-ssh cerebellum 'sudo systemctl restart mlc-nemotron'
+ssh xavier 'sudo systemctl status mlc-nemotron nginx tailscaled'
+ssh xavier 'sudo journalctl -u mlc-nemotron -f'
+ssh xavier 'sudo systemctl restart mlc-nemotron'
 ```
 
 Templates are included beside this file. If moving the deployment, update the
@@ -220,33 +224,33 @@ benchmarks serialized with the serving process; restore the service afterward.
 
 ## Certificates and DNS
 
-The leaf is signed by `~/LocalAuthority/local-ca.crt` on nowhere. Its SANs are
-`DNS:cerebellum.lan` and `IP:192.168.12.115`. The initial leaf expires on
-2027-11-01. The CA private key stays on nowhere; only the leaf key is installed
-on cerebellum, root-owned at `/etc/nginx/tls/cerebellum.key` (0600).
+The leaf is signed by `~/LocalAuthority/local-ca.crt` on benchmark-client. Its SANs are
+`DNS:xavier.example.com` and `IP:192.0.2.10`. The initial leaf expires on
+2027-11-01. The CA private key stays on benchmark-client; only the leaf key is installed
+on xavier, root-owned at `/etc/nginx/tls/xavier.key` (0600).
 
-Renew on nowhere using the saved CSR and extensions; OpenSSL prompts for the
+Renew on benchmark-client using the saved CSR and extensions; OpenSSL prompts for the
 CA key passphrase:
 
 ```bash
 cd ~/LocalAuthority
-openssl x509 -req -in crts/cerebellum.csr \
+openssl x509 -req -in crts/xavier.csr \
   -CA local-ca.crt -CAkey local-ca.key -CAcreateserial \
-  -out crts/cerebellum.crt -days 365 -sha256 -extfile exts/cerebellum.ext
-scp crts/cerebellum.crt cerebellum:.config/mlc-nemotron/cerebellum.crt
-ssh cerebellum 'sudo install -m 644 ~/.config/mlc-nemotron/cerebellum.crt /etc/nginx/tls/cerebellum.crt && sudo nginx -t && sudo systemctl reload nginx'
+  -out crts/xavier.crt -days 365 -sha256 -extfile exts/xavier.ext
+scp crts/xavier.crt xavier:.config/mlc-nemotron/xavier.crt
+ssh xavier 'sudo install -m 644 ~/.config/mlc-nemotron/xavier.crt /etc/nginx/tls/xavier.crt && sudo nginx -t && sudo systemctl reload nginx'
 ```
 
 The tailnet record lives in
-`convolution:/etc/headscale/extra-records.json`; Headscale watches that file.
+`headscale-server:/etc/headscale/extra-records.json`; Headscale watches that file.
 Its config references the file through `dns.extra_records_path`. The preceding
 configuration is backed up at
-`/etc/headscale/config.yaml.before-cerebellum-https`. The node was enrolled
+`/etc/headscale/config.yaml.before-xavier-https`. The node was enrolled
 under user `zero` with a single-use key; enrollment key files were removed.
 
 ## Verification
 
-Verified from nowhere: CA/hostname validation, LAN IP SAN validation,
+Verified from benchmark-client: CA/hostname validation, LAN IP SAN validation,
 authenticated `/v1/models`, unauthorized HTTP 401, ordinary and streaming
 chat (`391`, three SSE events), two queued clients (`42` and `121`), and chat
 through the tailnet DNS name. TLS verification remains enabled throughout.
@@ -263,7 +267,7 @@ During the initial HTTP checks, sampled total system RAM peaked at 18,803 MiB
 whole-device readings, not isolated worker memory, and short functional checks,
 not a sustained-load or maximum-context qualification. A second restart with
 12B-first warmup also passed, including the existing Pi model alias. Detailed local logs are
-under `nowhere:~/Workspaces/cerebellum-llm-bench/mlc-jp5/logs/dual-resident-20261101`;
+under `benchmark-client:~/Workspaces/xavier-llm-bench/mlc-jp5/logs/dual-resident-20261101`;
 see the [saved summary](../../docs/benchmarks/xavier/dual-resident-summary.json).
 
 

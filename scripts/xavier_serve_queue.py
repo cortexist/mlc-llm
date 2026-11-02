@@ -53,7 +53,7 @@ class SharedGenerationQueue:
             if message["type"] == "http.response.start":
                 message = dict(message)
                 message["headers"] = list(message.get("headers", [])) + [
-                    (b"x-cerebellum-queue-wait-ms", wait_ms)
+                    (b"x-xavier-queue-wait-ms", wait_ms)
                 ]
             await send(message)
 

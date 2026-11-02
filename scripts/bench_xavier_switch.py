@@ -10,9 +10,9 @@ import time
 import urllib.parse
 
 p = argparse.ArgumentParser()
-p.add_argument("--endpoint", default="https://cerebellum.lan")
+p.add_argument("--endpoint", default="https://xavier.example.com")
 p.add_argument(
-    "--key-file", type=pathlib.Path, default=pathlib.Path.home() / ".config/cerebellum/api-key"
+    "--key-file", type=pathlib.Path, default=pathlib.Path.home() / ".config/xavier/api-key"
 )
 p.add_argument("--repeats", type=int, default=8)
 p.add_argument("--output", type=pathlib.Path, required=True)
@@ -43,6 +43,13 @@ def request(method, path, payload=None):
     return d, h, elapsed
 
 
+def timing_header(headers, suffix):
+    # Accept older deployments with a different vendor prefix as well.
+    matches = [v for k, v in headers.items() if k.lower().endswith("-" + suffix)]
+    assert len(matches) == 1, f"Missing or ambiguous timing header: {suffix}"
+    return matches[0]
+
+
 def run(model, phase):
     if model == "nemotron":
         d, h, elapsed = request(
@@ -68,14 +75,14 @@ def run(model, phase):
             ),
         )
         assert len(d["data"][0]["embedding"]) == 768
-        instances.add(h["x-cerebellum-embedding-instance"])
+        instances.add(timing_header(h, "embedding-instance"))
     row = dict(
-        model=model, phase=phase, http_ms=elapsed, queue_ms=float(h["x-cerebellum-queue-wait-ms"])
+        model=model, phase=phase, http_ms=elapsed, queue_ms=float(timing_header(h, "queue-wait-ms"))
     )
     if model != "nemotron":
         row.update(
-            forward_ms=float(h["x-cerebellum-embedding-inference-ms"]),
-            worker_ms=float(h["x-cerebellum-embedding-total-ms"]),
+            forward_ms=float(timing_header(h, "embedding-inference-ms")),
+            worker_ms=float(timing_header(h, "embedding-total-ms")),
         )
     if phase != "warmup":
         rows.append(row)

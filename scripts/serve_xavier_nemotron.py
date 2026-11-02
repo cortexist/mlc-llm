@@ -126,7 +126,7 @@ queue = GenerationQueue()
 with ServerContext() as context:
     context.add_model("nemotron", engine)
     context.api_key = key
-    app = fastapi.FastAPI(title="Cerebellum Nemotron API", docs_url=None, redoc_url=None)
+    app = fastapi.FastAPI(title="Xavier Nemotron API", docs_url=None, redoc_url=None)
     app.add_middleware(GreedyOnlyMiddleware)
     app.add_middleware(SharedGenerationQueue, queue=queue, api_key=key)
 
@@ -162,13 +162,13 @@ with ServerContext() as context:
 
     @app.get("/v1/models", dependencies=[fastapi.Depends(openai_entrypoints.verify_api_key)])
     async def models():
-        entries = [dict(id="nemotron", object="model", owned_by="cerebellum", context_length=16384)]
+        entries = [dict(id="nemotron", object="model", owned_by="xavier", context_length=16384)]
         if mtp is not None:
             entries.append(
                 dict(
                     id=mtp.model_id,
                     object="model",
-                    owned_by="cerebellum",
+                    owned_by="xavier",
                     context_length=mtp.context_length,
                 )
             )
@@ -177,7 +177,7 @@ with ServerContext() as context:
                 dict(
                     id=embedding.model_id,
                     object="model",
-                    owned_by="cerebellum",
+                    owned_by="xavier",
                     context_length=embedding.context_length,
                     dimensions=embedding.dimension,
                     task="embedding",

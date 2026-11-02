@@ -1,6 +1,7 @@
 {
+  "publication_note": "Hostnames, network addresses and host-derived metadata are anonymized; numerical benchmark measurements are unchanged.",
   "date": "2026-11-01",
-  "device": "cerebellum / Jetson AGX Xavier 32GB",
+  "device": "xavier / Jetson AGX Xavier 32GB",
   "environment": {
     "jetpack": "5.1.8",
     "cuda": "11.4",

@@ -1,6 +1,6 @@
-# MLC-LLM for Jetson AGX Xavier
+![MLC-LLM for Jetson AGX Xavier](docs/_static/img/945-82972-0040-000.png)
 
-This fork runs **NVIDIA Nemotron 3.5 Bolt E4B** on **cerebellum**, a **Jetson AGX Xavier 32 GB**
+This fork runs **NVIDIA Nemotron 3.5 Bolt E4B** on **Jetson AGX Xavier 32 GB**
 using JetPack 5 / CUDA 11.4. It adds DFlash speculative decoding and kernels
 suited to Xavier's Volta GPU. The fastest measured configuration reaches
 **395 tok/s prefill at 448 tokens**, **279 tok/s at 1,768 tokens**, and roughly
@@ -117,8 +117,9 @@ compatibility investigation; these plain rates do not include speculative decodi
   12B port with mixed local/global KV head counts and global K=V projections.
 - **Native Unified MTP prototype:** official QAT assistant conversion, shared-KV
   draft steps, greedy target verification, and an optional resident HTTP adapter.
-- **Resident model routing:** Nemotron and 12B + MTP share one authenticated
-  endpoint and a FIFO generation queue, including streaming/cancellation handling.
+- **Resident model routing:** Nemotron shares one authenticated endpoint and
+  FIFO GPU queue with either 12B + MTP or EmbeddingGemma 2 text embeddings;
+  see the [resident switching PoC](docs/deploy/xavier_embedding_switch_poc.md).
 - **Faster projections:** one-token GEMV specialization; FP16 dequantization +
   cuBLAS for large prefill; native DP4A/Q8-activation kernels for 1–4 rows.
 - **DFlash execution:** target feature extraction, GPU greedy selection, cached
@@ -130,7 +131,7 @@ compatibility investigation; these plain rates do not include speculative decodi
   and separate prefill variants.
 - **Xavier HTTPS service:** authenticated OpenAI-compatible chat and native
   Nemotron/Gemma4 tool round-trips for Pi; see the
-  [deployment runbook](deploy/cerebellum/README.md).
+  [deployment runbook](deploy/xavier/README.md).
 
 ## Build on Jetson AGX Xavier
 
@@ -253,16 +254,17 @@ also occurred during the investigation; these measurements do not establish
 long-term hardware stability. Benchmark runners use temperature/memory stop
 limits. Keep compilation and GPU inference sequential.
 
-## HTTPS serving on cerebellum
+## HTTPS serving on Xavier
 
-The deployed API is **`https://cerebellum.lan/v1`**, with models **`nemotron`**
-and **`gemma4-12b`**,
-reachable from the LAN and the existing Headscale tailnet. It uses a
-certificate signed by the local CA, bearer authentication, streaming responses,
-and resident Nemotron/DFlash plus the bounded 12B/MTP adapter. Requests share
-one GPU generation queue; 12B currently has a 4K context and text/tool chat.
+The optional service exposes an OpenAI-compatible API on the LAN or a
+Headscale/Tailscale network. Use your own hostname, such as
+`https://xavier.example.com/v1`. It supports resident Nemotron with either
+the 12B/MTP adapter or the EmbeddingGemma 2 text worker. It uses a
+certificate signed by a local CA, bearer authentication and streaming responses.
+Requests share one GPU queue; the 12B adapter supports 4K text/tool chat, and
+the embedding PoC accepts up to 128 text tokens.
 See the
-[deployment and client instructions](deploy/cerebellum/README.md) for CA trust,
+[deployment and client instructions](deploy/xavier/README.md) for CA trust,
 credentials, service management and certificate renewal.
 
 ## Upstream and attribution

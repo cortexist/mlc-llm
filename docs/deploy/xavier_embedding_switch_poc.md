@@ -1,7 +1,10 @@
 # Nemotron ↔ EmbeddingGemma 2 resident switching PoC
 
-Cerebellum now exposes two complementary resident workers at the existing
-`https://cerebellum.lan/v1` endpoint:
+Hostnames and machine-specific paths are anonymized examples. Substitute your
+own endpoint and credential path; the benchmark measurements are unchanged.
+
+Xavier now exposes two complementary resident workers at the existing
+`https://xavier.example.com/v1` endpoint:
 
 | API model | Task | Current limit |
 |---|---|---|
@@ -44,7 +47,7 @@ checks, not a retrieval-quality evaluation.
 ## Switching measurements
 
 November 1, 2026; Xavier AGX 32GB, JetPack 5.1.8, CUDA 11.4, fixed MAXN clocks,
-cool fan profile. One persistent HTTPS connection from nowhere, matched inputs,
+cool fan profile. One persistent HTTPS connection from benchmark-client, matched inputs,
 two warmups per model, 16 samples per model/mode. Repeated-model blocks and
 alternating pairs run in both orders. Prefix caching is disabled. The Nemotron
 prompt asks for 17×23, with a 16-token output limit; every response is `391`.
@@ -82,8 +85,8 @@ remove contention for GPU time.
 Use the existing CA trust and bearer key. No TLS/DNS/port change is needed.
 
 ```bash
-curl https://cerebellum.lan/v1/embeddings \
-  -H "Authorization: Bearer $CEREBELLUM_API_KEY" \
+curl https://xavier.example.com/v1/embeddings \
+  -H "Authorization: Bearer $XAVIER_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"model":"embeddinggemma-2","input":"task: search result | query: how do I reset my password?"}'
 ```
@@ -105,7 +108,7 @@ sudo systemctl stop mlc-nemotron
 bash scripts/build_xavier_embedding_poc.sh
 # Copy the new model registry/module and service helpers to the deployed checkout
 # when building somewhere other than the active source tree.
-sudo install -m 644 deploy/cerebellum/embedding-poc.conf \
+sudo install -m 644 deploy/xavier/embedding-poc.conf \
   /etc/systemd/system/mlc-nemotron.service.d/embedding-poc.conf
 sudo systemctl daemon-reload
 sudo systemctl start mlc-nemotron
@@ -119,14 +122,15 @@ VM is initialized and used on its own single thread; cancellation drains GPU
 work before releasing the same queue used by chat/tool requests.
 
 ```bash
-python scripts/bench_cerebellum_switch.py --repeats 8 --output /tmp/switch.json
+python scripts/bench_xavier_switch.py --endpoint https://xavier.example.com \
+  --key-file ~/.config/xavier/api-key --repeats 8 --output /tmp/switch.json
 python tests/python/model/test_embeddinggemma2.py
 python tests/python/serve/test_xavier_model_queue.py
 ```
 
 For reference vectors, run `scripts/check_embeddinggemma2_reference.py` against
 the original checkpoint on CPU. Local experimental records are under
-`nowhere:~/Workspaces/cerebellum-llm-bench/mlc-jp5/logs/embedding-switch-poc-20261101`
+`benchmark-client:~/Workspaces/xavier-llm-bench/mlc-jp5/logs/embedding-switch-poc-20261101`
 and the corresponding remote `mlc-dflash-work/logs` directory.
 
 To restore Nemotron + 12B, move the optional `embedding-poc.conf` drop-in out of

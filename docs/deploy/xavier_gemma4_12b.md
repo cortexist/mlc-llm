@@ -6,7 +6,7 @@ The official QAT assistant now has a separate
 the DFlash experiment below remains a separate, unsuccessful pairing.
 
 The additional `gemma4_unified` model entry supports text generation from
-`~/Models/gemma-4-12B-IT-QAT-Q4_0-unquantized-heretic` on cerebellum. Its source
+`~/Models/gemma-4-12B-IT-QAT-Q4_0-unquantized-heretic` on xavier. Its source
 contains 11,907,350,320 text parameters in BF16; the small audio and vision
 components are excluded. MLC converts these values to `q4f16_1`. The source's
 `Q4_0-unquantized` name describes its QAT lineage, not its on-disk tensor dtype.
@@ -123,7 +123,7 @@ no long-context corrected rate is reported. Power-supply investigation remains
 deferred. The completed plain benchmark is unaffected, and Nemotron remains
 the serving model.
 
-Experimental artifacts on cerebellum:
+Experimental artifacts on xavier:
 
 - `dist/gemma4-12b-dflash-target`: target config with the six feature layers,
   linking to the converted 12B weights under `~/Models`.
@@ -133,8 +133,8 @@ Experimental artifacts on cerebellum:
 
 The benchmark runner accepts `--target`, `--draft`, `--target-lib` and
 `--draft-lib` for these artifacts. Detailed local logs are retained under
-`~/Workspaces/cerebellum-llm-bench/mlc-jp5/logs/gemma4-12b-heretic-20261101/`
-on nowhere; the numerical summary is versioned in
+`~/Workspaces/xavier-llm-bench/mlc-jp5/logs/gemma4-12b-heretic-20261101/`
+on benchmark-client; the numerical summary is versioned in
 [`docs/benchmarks/xavier/gemma4-12b-heretic-summary.json`](../benchmarks/xavier/gemma4-12b-heretic-summary.json).
 
 ## Native MTP assistant
