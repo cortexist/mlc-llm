@@ -1,0 +1,667 @@
+{
+  "date": "2026-11-01",
+  "device": "cerebellum / Jetson AGX Xavier 32GB",
+  "jetpack": "5.1.8",
+  "cuda": "11.4",
+  "power": "MAXN / fixed clocks / cool fan",
+  "embedding": {
+    "checkpoint": "~/Models/embeddinggemma-2",
+    "implementation": "text only, q0f32",
+    "parameters": 271002648,
+    "tensor_bytes": 1084010592,
+    "token_limit": 128,
+    "dimension": 768
+  },
+  "reference": {
+    "cosines": [
+      0.9999999999994483,
+      0.9999999999990836,
+      0.9999999999993612,
+      0.9999999999978575
+    ],
+    "max_abs_error": 2.5099143385887146e-07,
+    "returned_tokens": 64,
+    "expected_tokens": 64,
+    "headers": {
+      "Server": "nginx",
+      "Date": "Mon, 02 Nov 2026 03:12:35 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "65473",
+      "Connection": "close",
+      "x-cerebellum-embedding-inference-ms": "167.954177999718",
+      "x-cerebellum-embedding-total-ms": "176.1692050001784",
+      "x-cerebellum-embedding-instance": "ed9bb22c17b2420dbc7889c6e3ac804b",
+      "x-cerebellum-queue-wait-ms": "0"
+    },
+    "query_relevant": 0.8998286822896783,
+    "query_unrelated": 0.5432091348747425
+  },
+  "benchmark": {
+    "method": "One persistent HTTPS connection; matched inputs; two warmups per model; repeated blocks and alternating pairs in both orders. Measures warm request penalty, not isolated CUDA context-switch or preemption latency.",
+    "summary": {
+      "nemotron": {
+        "repeated": {
+          "samples": 16,
+          "http_ms": {
+            "median": 530.1903500000001,
+            "min": 524.670028,
+            "max": 613.737329,
+            "p10": 524.735155,
+            "p90": 537.97907
+          },
+          "queue_ms": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "p10": 0.0,
+            "p90": 0.0
+          }
+        },
+        "alternating": {
+          "samples": 16,
+          "http_ms": {
+            "median": 525.9500265,
+            "min": 520.389519,
+            "max": 619.484583,
+            "p10": 520.982627,
+            "p90": 574.546155
+          },
+          "queue_ms": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "p10": 0.0,
+            "p90": 0.0
+          }
+        },
+        "alternating_minus_repeated_http_ms": -4.240323500000045
+      },
+      "embeddinggemma-2": {
+        "repeated": {
+          "samples": 16,
+          "http_ms": {
+            "median": 55.40298,
+            "min": 53.640806,
+            "max": 67.48352,
+            "p10": 54.195348,
+            "p90": 59.112264
+          },
+          "forward_ms": {
+            "median": 42.134630999953515,
+            "min": 41.39593600007174,
+            "max": 42.76991099982297,
+            "p10": 41.412449000063134,
+            "p90": 42.56871699999465
+          },
+          "worker_ms": {
+            "median": 43.906392499934555,
+            "min": 43.01646699991579,
+            "max": 44.46519900011481,
+            "p10": 43.030355000155396,
+            "p90": 44.259173000000374
+          },
+          "queue_ms": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "p10": 0.0,
+            "p90": 0.0
+          }
+        },
+        "alternating": {
+          "samples": 16,
+          "http_ms": {
+            "median": 56.115068,
+            "min": 55.165738,
+            "max": 112.632545,
+            "p10": 55.479198,
+            "p90": 57.871663
+          },
+          "forward_ms": {
+            "median": 41.40201450002223,
+            "min": 40.9688519998781,
+            "max": 41.801916999929745,
+            "p10": 41.06005299991011,
+            "p90": 41.72867400006908
+          },
+          "worker_ms": {
+            "median": 43.16858400000001,
+            "min": 42.697100999930626,
+            "max": 43.66732600010437,
+            "p10": 42.749130999936824,
+            "p90": 43.526839999913136
+          },
+          "queue_ms": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "p10": 0.0,
+            "p90": 0.0
+          }
+        },
+        "alternating_minus_repeated_http_ms": 0.7120880000000014
+      }
+    },
+    "embedding_instances": [
+      "ed9bb22c17b2420dbc7889c6e3ac804b"
+    ],
+    "connection_count": 1,
+    "health_before": {
+      "status": "ok",
+      "model": "nemotron",
+      "models": [
+        "nemotron",
+        "embeddinggemma-2"
+      ],
+      "queue": {
+        "active_model": null,
+        "waiting": 0,
+        "completed": 4
+      }
+    },
+    "health_after": {
+      "status": "ok",
+      "model": "nemotron",
+      "models": [
+        "nemotron",
+        "embeddinggemma-2"
+      ],
+      "queue": {
+        "active_model": null,
+        "waiting": 0,
+        "completed": 72
+      }
+    },
+    "rows": [
+      {
+        "model": "nemotron",
+        "phase": "repeated",
+        "http_ms": 525.446943,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "nemotron",
+        "phase": "repeated",
+        "http_ms": 530.01691,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "nemotron",
+        "phase": "repeated",
+        "http_ms": 531.102837,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "nemotron",
+        "phase": "repeated",
+        "http_ms": 537.97907,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "nemotron",
+        "phase": "repeated",
+        "http_ms": 530.36379,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "nemotron",
+        "phase": "repeated",
+        "http_ms": 526.828232,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "nemotron",
+        "phase": "repeated",
+        "http_ms": 532.174134,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "nemotron",
+        "phase": "repeated",
+        "http_ms": 528.846669,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "repeated",
+        "http_ms": 67.48352,
+        "queue_ms": 0.0,
+        "forward_ms": 41.666797000061706,
+        "worker_ms": 43.657075000055556
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "repeated",
+        "http_ms": 55.338482,
+        "queue_ms": 0.0,
+        "forward_ms": 41.64989999981117,
+        "worker_ms": 43.37146100010614
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "repeated",
+        "http_ms": 53.640806,
+        "queue_ms": 0.0,
+        "forward_ms": 41.412449000063134,
+        "worker_ms": 43.030355000155396
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "repeated",
+        "http_ms": 54.917155,
+        "queue_ms": 0.0,
+        "forward_ms": 41.39593600007174,
+        "worker_ms": 43.11493499994867
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "repeated",
+        "http_ms": 54.329834,
+        "queue_ms": 0.0,
+        "forward_ms": 41.45709099998385,
+        "worker_ms": 43.01646699991579
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "repeated",
+        "http_ms": 55.616043,
+        "queue_ms": 0.0,
+        "forward_ms": 41.74206499988031,
+        "worker_ms": 43.53450899998279
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "repeated",
+        "http_ms": 59.112264,
+        "queue_ms": 0.0,
+        "forward_ms": 42.2726199999488,
+        "worker_ms": 43.91804800002319
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "repeated",
+        "http_ms": 61.389641,
+        "queue_ms": 0.0,
+        "forward_ms": 42.02323200001956,
+        "worker_ms": 43.6875410000539
+      },
+      {
+        "model": "nemotron",
+        "phase": "alternating",
+        "http_ms": 574.546155,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "alternating",
+        "http_ms": 56.068449,
+        "queue_ms": 0.0,
+        "forward_ms": 41.560172000117745,
+        "worker_ms": 43.39453800002957
+      },
+      {
+        "model": "nemotron",
+        "phase": "alternating",
+        "http_ms": 527.778484,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "alternating",
+        "http_ms": 56.922792,
+        "queue_ms": 0.0,
+        "forward_ms": 41.357632999961425,
+        "worker_ms": 43.105659000048036
+      },
+      {
+        "model": "nemotron",
+        "phase": "alternating",
+        "http_ms": 521.660946,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "alternating",
+        "http_ms": 56.530025,
+        "queue_ms": 0.0,
+        "forward_ms": 41.24131000003217,
+        "worker_ms": 42.97727199991641
+      },
+      {
+        "model": "nemotron",
+        "phase": "alternating",
+        "http_ms": 613.209432,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "alternating",
+        "http_ms": 58.754925,
+        "queue_ms": 0.0,
+        "forward_ms": 41.06005299991011,
+        "worker_ms": 42.858705000071495
+      },
+      {
+        "model": "nemotron",
+        "phase": "alternating",
+        "http_ms": 522.20203,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "alternating",
+        "http_ms": 56.048289,
+        "queue_ms": 0.0,
+        "forward_ms": 40.9688519998781,
+        "worker_ms": 42.697100999930626
+      },
+      {
+        "model": "nemotron",
+        "phase": "alternating",
+        "http_ms": 523.794941,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "alternating",
+        "http_ms": 55.165738,
+        "queue_ms": 0.0,
+        "forward_ms": 41.40206100009891,
+        "worker_ms": 43.16999200000282
+      },
+      {
+        "model": "nemotron",
+        "phase": "alternating",
+        "http_ms": 525.065721,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "alternating",
+        "http_ms": 56.161687,
+        "queue_ms": 0.0,
+        "forward_ms": 41.14016099993023,
+        "worker_ms": 42.89577100007591
+      },
+      {
+        "model": "nemotron",
+        "phase": "alternating",
+        "http_ms": 520.389519,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "alternating",
+        "http_ms": 56.287602,
+        "queue_ms": 0.0,
+        "forward_ms": 41.72867400006908,
+        "worker_ms": 43.54156700014755
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "repeated",
+        "http_ms": 54.259567,
+        "queue_ms": 0.0,
+        "forward_ms": 42.24534099989796,
+        "worker_ms": 44.09388299995953
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "repeated",
+        "http_ms": 55.626463,
+        "queue_ms": 0.0,
+        "forward_ms": 42.080116000079215,
+        "worker_ms": 43.89473699984592
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "repeated",
+        "http_ms": 54.325234,
+        "queue_ms": 0.0,
+        "forward_ms": 42.247483999972246,
+        "worker_ms": 43.949363999900015
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "repeated",
+        "http_ms": 54.195348,
+        "queue_ms": 0.0,
+        "forward_ms": 42.189145999827815,
+        "worker_ms": 43.93681999999899
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "repeated",
+        "http_ms": 54.622605,
+        "queue_ms": 0.0,
+        "forward_ms": 42.59722999995574,
+        "worker_ms": 44.464622999839776
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "repeated",
+        "http_ms": 57.352749,
+        "queue_ms": 0.0,
+        "forward_ms": 42.52461900000526,
+        "worker_ms": 44.259173000000374
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "repeated",
+        "http_ms": 55.994232,
+        "queue_ms": 0.0,
+        "forward_ms": 42.56871699999465,
+        "worker_ms": 44.22633900003348
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "repeated",
+        "http_ms": 55.467478,
+        "queue_ms": 0.0,
+        "forward_ms": 42.76991099982297,
+        "worker_ms": 44.46519900011481
+      },
+      {
+        "model": "nemotron",
+        "phase": "repeated",
+        "http_ms": 532.343015,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "nemotron",
+        "phase": "repeated",
+        "http_ms": 529.712067,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "nemotron",
+        "phase": "repeated",
+        "http_ms": 528.417468,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "nemotron",
+        "phase": "repeated",
+        "http_ms": 613.737329,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "nemotron",
+        "phase": "repeated",
+        "http_ms": 530.422326,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "nemotron",
+        "phase": "repeated",
+        "http_ms": 596.400245,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "nemotron",
+        "phase": "repeated",
+        "http_ms": 524.735155,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "nemotron",
+        "phase": "repeated",
+        "http_ms": 524.670028,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "alternating",
+        "http_ms": 55.930094,
+        "queue_ms": 0.0,
+        "forward_ms": 41.67969600007382,
+        "worker_ms": 43.33040599999549
+      },
+      {
+        "model": "nemotron",
+        "phase": "alternating",
+        "http_ms": 529.624513,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "alternating",
+        "http_ms": 112.632545,
+        "queue_ms": 0.0,
+        "forward_ms": 41.63335799989909,
+        "worker_ms": 43.011796999962826
+      },
+      {
+        "model": "nemotron",
+        "phase": "alternating",
+        "http_ms": 524.95353,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "alternating",
+        "http_ms": 55.909405,
+        "queue_ms": 0.0,
+        "forward_ms": 41.302240000050006,
+        "worker_ms": 42.749130999936824
+      },
+      {
+        "model": "nemotron",
+        "phase": "alternating",
+        "http_ms": 619.484583,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "alternating",
+        "http_ms": 55.800738,
+        "queue_ms": 0.0,
+        "forward_ms": 41.801916999929745,
+        "worker_ms": 43.526839999913136
+      },
+      {
+        "model": "nemotron",
+        "phase": "alternating",
+        "http_ms": 529.648024,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "alternating",
+        "http_ms": 56.994551,
+        "queue_ms": 0.0,
+        "forward_ms": 41.75049099990247,
+        "worker_ms": 43.66732600010437
+      },
+      {
+        "model": "nemotron",
+        "phase": "alternating",
+        "http_ms": 526.834332,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "alternating",
+        "http_ms": 55.890286,
+        "queue_ms": 0.0,
+        "forward_ms": 41.607222000038746,
+        "worker_ms": 43.474295999885726
+      },
+      {
+        "model": "nemotron",
+        "phase": "alternating",
+        "http_ms": 530.478808,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "alternating",
+        "http_ms": 55.479198,
+        "queue_ms": 0.0,
+        "forward_ms": 41.376874999969004,
+        "worker_ms": 43.1671759999972
+      },
+      {
+        "model": "nemotron",
+        "phase": "alternating",
+        "http_ms": 523.10847,
+        "queue_ms": 0.0
+      },
+      {
+        "model": "embeddinggemma-2",
+        "phase": "alternating",
+        "http_ms": 57.871663,
+        "queue_ms": 0.0,
+        "forward_ms": 41.401967999945555,
+        "worker_ms": 43.19162799993137
+      },
+      {
+        "model": "nemotron",
+        "phase": "alternating",
+        "http_ms": 520.982627,
+        "queue_ms": 0.0
+      }
+    ]
+  },
+  "concurrent": {
+    "queue_health": {
+      "status": "ok",
+      "model": "nemotron",
+      "models": [
+        "nemotron",
+        "embeddinggemma-2"
+      ],
+      "queue": {
+        "active_model": "nemotron",
+        "waiting": 1,
+        "completed": 72
+      }
+    },
+    "nemotron_s": 1.7732610390521586,
+    "embedding_s": 1.6866383079905063,
+    "embedding_queue_ms": 1619.0,
+    "embedding_forward_ms": 41.5971059999265
+  },
+  "memory": {
+    "scope": "whole device, sampled during short request checks",
+    "peak_used_mib": 12527,
+    "minimum_available_mib": 18209,
+    "maximum_sampled_gpu_c": 47.0
+  },
+  "validation": {
+    "full_small_encoder_cpu": true,
+    "actual_checkpoint_gpu": true,
+    "base64_256d": true,
+    "oversize_rejected": true,
+    "queue_cpu_checks": 6,
+    "pid_before": 1942,
+    "pid_after": 1942
+  },
+  "limitations": [
+    "short, text-only 128-token FP32 PoC; no image/audio or d1 port",
+    "no isolated CUDA context-switch measurement",
+    "whole-request FIFO; no token/block preemption",
+    "12B temporarily disabled by optional embedding-poc.conf; old artifacts retained",
+    "not a sustained-load, full-context or retrieval-quality evaluation"
+  ]
+}

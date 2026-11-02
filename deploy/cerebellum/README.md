@@ -1,5 +1,11 @@
 # Resident model HTTPS service on cerebellum
 
+The optional **embedding switching PoC** profile is currently active: resident
+`nemotron` chat and `embeddinggemma-2` text embeddings share the same GPU queue.
+The 12B worker is unloaded by `embedding-poc.conf`; its artifacts and the base
+dual-chat configuration below are retained. See the
+[PoC measurements, API and restore instructions](../../docs/deploy/xavier_embedding_switch_poc.md).
+
 The deployed OpenAI-compatible API is **`https://cerebellum.lan/v1`**, with
 model IDs **`nemotron`** and **`gemma4-12b`**. `/healthz` reports readiness. Model listing and
 generation require `Authorization: Bearer <API key>`.

@@ -25,7 +25,8 @@ class SharedGenerationQueue:
         if (
             scope["type"] != "http"
             or scope.get("method") != "POST"
-            or scope.get("path") not in ("/v1/chat/completions", "/v1/completions")
+            or scope.get("path")
+            not in ("/v1/chat/completions", "/v1/completions", "/v1/embeddings")
         ):
             return await self.app(scope, receive, send)
         headers = dict(scope.get("headers", []))

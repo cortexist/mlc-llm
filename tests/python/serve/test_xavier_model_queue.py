@@ -35,11 +35,12 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
             async def send(event):
                 responses.append(event)
 
+            path = "/v1/embeddings" if model == "embeddinggemma-2" else "/v1/chat/completions"
             await app(
                 dict(
                     type="http",
                     method="POST",
-                    path="/v1/chat/completions",
+                    path=path,
                     model=model,
                     headers=[(b"authorization", key.encode())],
                 ),
@@ -49,7 +50,7 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
 
         first = asyncio.create_task(call("nemotron"))
         await started.wait()
-        second = asyncio.create_task(call("gemma4-12b"))
+        second = asyncio.create_task(call("embeddinggemma-2"))
         await asyncio.sleep(0.01)
         self.assertEqual(queue.waiting, 1)
         await asyncio.wait_for(call("invalid", "bad-key"), 1)
@@ -62,8 +63,8 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
             [
                 ("nemotron", "start"),
                 ("nemotron", "end"),
-                ("gemma4-12b", "start"),
-                ("gemma4-12b", "end"),
+                ("embeddinggemma-2", "start"),
+                ("embeddinggemma-2", "end"),
             ],
         )
         self.assertEqual(queue.completed, 2)

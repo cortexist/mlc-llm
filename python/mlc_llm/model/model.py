@@ -21,7 +21,7 @@ from .eagle import eagle_loader, eagle_model
 from .gemma import gemma_loader, gemma_model
 from .gemma2 import gemma2_loader, gemma2_model
 from .gemma3 import gemma3_loader, gemma3_model, gemma3v_loader, gemma3v_model
-from .gemma4 import gemma4_loader, gemma4_model, gemma4_mtp, gemma4_unified
+from .gemma4 import embeddinggemma2, gemma4_loader, gemma4_model, gemma4_mtp, gemma4_unified
 from .gpt2 import gpt2_loader, gpt2_model
 from .gpt_bigcode import gpt_bigcode_loader, gpt_bigcode_model
 from .gpt_j import gpt_j_loader, gpt_j_model
@@ -278,6 +278,23 @@ MODELS: Dict[str, Model] = {  # noqa: UP006
         ),
         artifact=gemma4_model.GEMMA4_ARTIFACT,
         supports_flashinfer=False,
+    ),
+    "embedding_gemma2_poc": Model(
+        name="embedding_gemma2_poc",
+        model=embeddinggemma2.EmbeddingGemma2,
+        config=embeddinggemma2.EmbeddingConfig,
+        source={
+            "huggingface-safetensor": embeddinggemma2.huggingface,
+            "huggingface-torch": embeddinggemma2.huggingface,
+        },
+        quantize=make_quantization_functions(
+            embeddinggemma2.EmbeddingGemma2, supports_ft_quant=False
+        ),
+        supports_flashinfer=False,
+        model_task="embedding",
+        embedding_metadata=EmbeddingMetadata(
+            model_type="encoder", pooling_strategy="mean", normalize=True
+        ),
     ),
     "gemma4_unified_assistant": Model(
         name="gemma4_unified_assistant",

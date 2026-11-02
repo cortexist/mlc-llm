@@ -5,19 +5,21 @@ import os
 from pathlib import Path
 
 import fastapi
-import mlc_llm
 import uvicorn
 from gemma4_tools import Gemma4ToolAdapter
+from xavier_serve_queue import GenerationQueue, SharedGenerationQueue
+
+import mlc_llm
 from mlc_llm.base import _LIB_PATH
 from mlc_llm.protocol import error_protocol
 from mlc_llm.protocol.openai_api_protocol import (
     ChatCompletionRequest,
     CompletionRequest,
+    EmbeddingRequest,
 )
 from mlc_llm.serve import AsyncMLCEngine, EngineConfig
 from mlc_llm.serve.entrypoints import openai_entrypoints
 from mlc_llm.serve.server import ServerContext
-from xavier_serve_queue import GenerationQueue, SharedGenerationQueue
 
 
 class GreedyOnlyMiddleware:
@@ -89,6 +91,11 @@ if os.environ.get("MLC_GEMMA4_MTP") == "1":
     # Reserve/warm the larger target's workspace before the second engine's
     # allocations. Xavier NvMap can reject a large late startup allocation.
     mtp = MTPChat(root)
+embedding = None
+if os.environ.get("MLC_EMBEDDINGGEMMA2") == "1":
+    from embeddinggemma2_service import ResidentEmbedding
+
+    embedding = ResidentEmbedding(root)
 engine = AsyncMLCEngine(
     str(root / "dist/target-16k"),
     device="cuda",
@@ -146,6 +153,13 @@ with ServerContext() as context:
         queue.active_model = "nemotron"
         return await openai_entrypoints.request_completion(request, raw_request)
 
+    @app.post("/v1/embeddings", dependencies=[fastapi.Depends(openai_entrypoints.verify_api_key)])
+    async def embed(request: EmbeddingRequest):
+        if embedding is None or request.model not in (None, embedding.model_id):
+            raise fastapi.HTTPException(404, "Embedding model unavailable; see /v1/models")
+        queue.active_model = embedding.model_id
+        return await embedding.handle(request)
+
     @app.get("/v1/models", dependencies=[fastapi.Depends(openai_entrypoints.verify_api_key)])
     async def models():
         entries = [dict(id="nemotron", object="model", owned_by="cerebellum", context_length=16384)]
@@ -158,6 +172,17 @@ with ServerContext() as context:
                     context_length=mtp.context_length,
                 )
             )
+        if embedding is not None:
+            entries.append(
+                dict(
+                    id=embedding.model_id,
+                    object="model",
+                    owned_by="cerebellum",
+                    context_length=embedding.context_length,
+                    dimensions=embedding.dimension,
+                    task="embedding",
+                )
+            )
         return dict(object="list", data=entries)
 
     app.include_router(openai_entrypoints.app)
@@ -168,7 +193,9 @@ with ServerContext() as context:
         return {
             "status": "ok",
             "model": "nemotron",
-            "models": ["nemotron"] + ([mtp.model_id] if mtp is not None else []),
+            "models": ["nemotron"]
+            + ([mtp.model_id] if mtp is not None else [])
+            + ([embedding.model_id] if embedding is not None else []),
             "queue": queue.status(),
         }
 
@@ -177,3 +204,5 @@ with ServerContext() as context:
     finally:
         if mtp is not None:
             mtp.pool.shutdown(wait=True)
+        if embedding is not None:
+            embedding.pool.shutdown(wait=True)
