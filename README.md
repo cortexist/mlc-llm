@@ -1,27 +1,52 @@
 ![MLC-LLM for Jetson AGX Xavier](docs/_static/img/945-82972-0040-000.png)
 
 This fork runs **NVIDIA Nemotron 3.5 Bolt E4B** on **Jetson AGX Xavier 32 GB**
-using JetPack 5 / CUDA 11.4. It adds DFlash speculative decoding and kernels
-suited to Xavier's Volta GPU. The November 1 full-request benchmark reaches
-**395 tok/s prefill at 448 tokens**, **279 tok/s at 1,768 tokens**, and roughly
-**31–34 tok/s decode**.
-
-The November 2 [layer-aware prefill follow-up](docs/deploy/xavier_prefill_followup.md)
-reaches **449 tok/s at 448 tokens** and **372 tok/s at 910 tokens**, improving
-the corresponding 16K-context controls by **13% and 12%**. This is a separate
-short-output experiment; the historical tables below retain their original protocol.
-
-The subsequent [weight-expansion and GEMM experiment](docs/deploy/xavier_prefill_linear.md)
-reaches **327 / 520 / 416 tok/s** at **161 / 448 / 910 prompt tokens**.
-Vectorized Q4 expansion improves matched controls by **28% / 15% / 11%**
-and is enabled in the service. Separate, shape-specific dense GEMM tuning
-adds only **0.6–3.1%** in short trials and remains experimental.
+using JetPack 5 / CUDA 11.4, with DFlash speculative decoding and kernels
+suited to Xavier's Volta GPU. The latest deployed configuration reaches
+**327 tok/s prefill at 161 tokens**, **520 tok/s at 448 tokens**, and
+**416 tok/s at 910 tokens** in the November 2 measurements below.
 
 Based on upstream MLC-LLM `44fd06d0`. DFlash builds on
 [Lev Stambler's implementation](https://github.com/Lev-Stambler/mlc-llm--DFlash/tree/b6c7bf7d269fd4127fd1a48c478b01d9dc8ff42b).
 The original project overview is preserved in [README.upstream.md](README.upstream.md).
 
-## Benchmarks: this fork versus baseline MLC
+## Latest deployed Nemotron benchmarks — November 2, 2026
+
+Both arms use `hybrid-width` attention. The deployed fork adds vectorized
+Q4-to-FP16 weight expansion while retaining cuBLAS's algorithm selection.
+This is a matched comparison against the preceding fork configuration.
+All rates are prefill tokens/second.
+
+| Prompt tokens | Fork before vector expansion | Deployed fork | Gain |
+|---|---:|---:|---:|
+| 161 | 255.10 | **327.11** | **28.23%** |
+| 448 | 451.76 | **520.17** | **15.14%** |
+| 910 | 374.64 | **416.33** | **11.13%** |
+
+**Method:** Xavier MAXN, q4f16_1 target, F16 DFlash assistant with two proposals,
+one sequence, **16K context**, 512-token prefill chunks, prefix caching disabled,
+and **16 forced output tokens**. The order is old/new/old, with one warmup
+and two measured requests per prompt in each arm; the control pools the four
+bracketing measurements. All six output strings per prompt match exactly.
+The short decode samples serve as regression checks.
+
+The latest longer prompt is **910 tokens**. The **1,768-token** results in the
+historical engine comparisons below were measured with an earlier build;
+that length has not been remeasured with the latest deployed configuration.
+The historical comparisons use 8K context and 128 output tokens, so their
+decode rates and complete-request latencies belong to that older protocol.
+
+See the [weight-expansion results, build instructions and rollback](docs/deploy/xavier_prefill_linear.md)
+and [machine-readable measurements](docs/benchmarks/xavier/prefill-linear-summary.json).
+The preceding [layer-aware attention experiment](docs/deploy/xavier_prefill_followup.md)
+measured a further 12–13% prefill improvement at 448/910 tokens against its
+own control. Separate shape-specific dense GEMM tuning added 0.6–3.1% in
+short trials and remains experimental.
+
+<details>
+<summary>Historical fork versus baseline MLC and llama.cpp — October 31–November 1 (161 / 448 / 1,768 tokens)</summary>
+
+### Historical benchmarks: this fork versus baseline MLC
 
 All results below run **Nemotron 3.5 Bolt E4B** on the same Xavier. Rates are
 in tokens/second. Baseline uses upstream MLC with the CUDA 11.4 compatibility
@@ -60,7 +85,7 @@ complete 128-token request from **16.354 to 10.438 seconds**. Decode stays
 approximately constant. The `width` variant preserves all six measured baseline
 output strings; `hybrid` changes the long forced continuation.
 
-## Benchmarks: this fork versus llama.cpp
+### Historical benchmarks: this fork versus llama.cpp
 
 Both engines run **Nemotron 3.5 Bolt E4B with two DFlash proposals**, the same
 prompt text and a forced 128-token output. MLC uses q4f16_1 plus Q8 activations;
@@ -86,6 +111,8 @@ per case. Tables report means; profiler timings are excluded. Forced output
 past EOS measures throughput rather than natural answer quality. Raw summaries
 are in [docs/benchmarks/xavier](docs/benchmarks/xavier); detailed validation and
 history are in [the experiment record](docs/deploy/xavier_dflash.md).
+
+</details>
 
 ## Additional model: Gemma4 Unified 12B
 
