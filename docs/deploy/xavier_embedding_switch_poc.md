@@ -16,6 +16,10 @@ worker and enables EmbeddingGemma 2. It preserves the previous dual-chat
 configuration and all checkpoints/libraries. Nemotron remains Pi's default.
 Embedding models are accessed through `/v1/embeddings`, not Pi's chat picker.
 
+For a practical application, see the [runbook search/RAG experiment](xavier_runbook_rag.md):
+251 indexed passages, embedding/BM25/hybrid comparisons, and cited Nemotron
+answers, including saved retrieval and answer failures.
+
 ## What was implemented
 
 This is the actual local `~/Models/embeddinggemma-2` text checkpoint: 271,002,648

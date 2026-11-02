@@ -1,0 +1,125 @@
+{
+  "method": "Author-written questions and evidence annotations fixed before the first full-corpus ranking run. Development set, not an independent or held-out benchmark. Evidence phrases can occur in multiple documents; all matching passages are accepted.",
+  "questions": [
+    {
+      "id": "q01",
+      "question": "Why does the small text encoder use four-byte weights on this GPU instead of half precision?",
+      "evidence": ["Xavier has no native BF16", "FP16 conversion is explicitly rejected"],
+      "answer_key": "FP32 is used because Xavier has no native BF16 and this model is unsafe in FP16."
+    },
+    {
+      "id": "q02",
+      "question": "My passage is exactly 128 content tokens. Will the embedding endpoint accept it unchanged?",
+      "evidence": ["128-token bucket", "128 tokens including BOS/EOS"],
+      "answer_key": "No. The 128-token budget includes BOS/EOS and any task/title prefix; overlong inputs are rejected, not truncated."
+    },
+    {
+      "id": "q03",
+      "question": "Can I store shorter vectors, and what must happen after keeping only the leading coordinates?",
+      "evidence": ["renormalizes after truncation", "renormalize"],
+      "answer_key": "Use 128, 256, 512 or 768 dimensions; renormalize after truncation."
+    },
+    {
+      "id": "q04",
+      "question": "Why does the embedding worker manually insert tokens around the input string?",
+      "evidence": ["MLC's tokenizer encodes content without Hugging Face post-processing"],
+      "answer_key": "MLC tokenization omits the Hugging Face post-processing, so the worker explicitly adds the checkpoint's BOS and EOS."
+    },
+    {
+      "id": "q05",
+      "question": "Can a tiny vector lookup interrupt a language model that is already producing an answer?",
+      "evidence": ["The existing queue still serializes whole requests", "Token/block preemption and priority scheduling"],
+      "answer_key": "No. The shared FIFO serializes whole requests; token/block preemption and priorities are not implemented."
+    },
+    {
+      "id": "q06",
+      "question": "If a client abandons its stream while GPU work is still running, when may another request start?",
+      "evidence": ["cancellation drains GPU work before releasing", "cancellation drains that worker before releasing"],
+      "answer_key": "The active worker must drain before the shared queue is released."
+    },
+    {
+      "id": "q07",
+      "question": "When the assistant asks to read a file or execute a shell command, which machine actually does it?",
+      "evidence": ["Tools execute on the client", "Pi executes tools on the client", "tool execution happens in the client"],
+      "answer_key": "The Pi client executes tools locally; the inference service only generates and translates tool calls."
+    },
+    {
+      "id": "q08",
+      "question": "Node does not recognize the certificate issuer even though the root is installed in the OS. What setting enables that trust?",
+      "evidence": ["NODE_USE_SYSTEM_CA=1"],
+      "answer_key": "Set NODE_USE_SYSTEM_CA=1 before starting Node/Pi."
+    },
+    {
+      "id": "q09",
+      "question": "Why did Pi let the 4K chat model return only a single token, and how was the request fixed?",
+      "evidence": ["Pi 1.4.0's fixed 4,096-token safety margin"],
+      "answer_key": "Pi's fixed 4096-token safety margin clamped output to one token; explicitly set samplingParams.max_tokens to 512 while retaining server budget checks."
+    },
+    {
+      "id": "q10",
+      "question": "Which extension withheld even tiny file-read results and sent the agent into repeated reads?",
+      "evidence": ["pi-clm", "one-line read result"],
+      "answer_key": "pi-clm's guard withheld the result; its extensions list is disabled while native Pi compaction remains active."
+    },
+    {
+      "id": "q11",
+      "question": "Should we increase the speculative proposal count to three as the general default?",
+      "evidence": ["Keep **two draft tokens** as the general"],
+      "answer_key": "No. Two is the general setting; three only slightly helped short chat and regressed the longer cases."
+    },
+    {
+      "id": "q12",
+      "question": "Can Google's original 12B assistant simply replace the diffusion drafter in our current speculative engine?",
+      "evidence": ["it cannot replace the diffusion drafter", "requires a separate Gemma4 MTP execution path"],
+      "answer_key": "No. The native Unified assistant needs its own MTP path and cannot directly replace DFlash's diffusion drafter."
+    },
+    {
+      "id": "q13",
+      "question": "Which instruction and activation format accelerate the small verification matrix operations on Volta?",
+      "evidence": ["DP4A against the existing q4f16_1", "quantizes activations to signed Q8"],
+      "answer_key": "The native kernel quantizes activations to signed Q8 and uses DP4A with the q4f16_1 weights."
+    },
+    {
+      "id": "q14",
+      "question": "Which prefill option is simpler, and what extra arithmetic does the faster alternative introduce?",
+      "evidence": ["`width` is the simpler prefill choice", "FP16 probabilities in WMMA attention"],
+      "answer_key": "width is simpler; hybrid additionally uses FP16 attention probabilities with Volta WMMA for current-chunk attention."
+    },
+    {
+      "id": "q15",
+      "question": "What persistent fan profile was selected for maximum-performance operation?",
+      "evidence": ["profile changed from `quiet` to `cool`"],
+      "answer_key": "cool replaced quiet; pid and open_loop were retained."
+    },
+    {
+      "id": "q16",
+      "question": "Do the larger 16K and 4K context builds require converting all weights again or rebuilding the C++ runtime?",
+      "evidence": ["No weight reconversion or C++ runtime rebuild is required"],
+      "answer_key": "No. Existing converted artifacts are reused; new context configurations and model libraries are built."
+    },
+    {
+      "id": "q17",
+      "question": "Which exact replacement power-adapter product number permanently eliminated the board shutdowns?",
+      "evidence": [],
+      "answer_key": "Not found in supplied sources. No permanent power fix or replacement product number is documented."
+    },
+    {
+      "id": "q18",
+      "question": "What is the measured embedding throughput at 32 simultaneous clients?",
+      "evidence": [],
+      "answer_key": "Not found in supplied sources. No 32-client throughput measurement is documented."
+    },
+    {
+      "id": "q19",
+      "question": "What retrieval accuracy did we obtain on our private customer-ticket archive?",
+      "evidence": [],
+      "answer_key": "Not found in supplied sources. There is no private ticket-archive evaluation."
+    },
+    {
+      "id": "q20",
+      "question": "Which vector database and version are used by our production search deployment?",
+      "evidence": [],
+      "answer_key": "Not found in supplied sources. The production vector database and version are not documented."
+    }
+  ]
+}

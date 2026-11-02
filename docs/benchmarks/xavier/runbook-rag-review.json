@@ -1,0 +1,239 @@
+{
+  "method": "Codex manual inspection of all generated answers against frozen answer keys and displayed sources. Strict complete-answer grading; partial answers and appropriate declines on answerable questions do not count as complete. This is author review, not independent human or model-judge evaluation.",
+  "results": [
+    {
+      "id": "q01",
+      "embedding": {
+        "verdict": "incorrect",
+        "reason": "Confuses CPU reference validation with GPU precision requirements."
+      },
+      "hybrid_context": {
+        "verdict": "correct",
+        "reason": "Identifies FP32, unavailable native BF16 and rejection of FP16."
+      }
+    },
+    {
+      "id": "q02",
+      "embedding": {
+        "verdict": "partial",
+        "reason": "Does not resolve the content-token versus BOS/EOS budget question."
+      },
+      "hybrid_context": {
+        "verdict": "partial",
+        "reason": "Mentions the 128-token bucket and rejection but does not explicitly account for BOS/EOS."
+      }
+    },
+    {
+      "id": "q03",
+      "embedding": {
+        "verdict": "incorrect",
+        "reason": "Answers about RoPE/context trimming instead of embedding-vector truncation."
+      },
+      "hybrid_context": {
+        "verdict": "correct",
+        "reason": "Lists supported dimensions and renormalization."
+      }
+    },
+    {
+      "id": "q04",
+      "embedding": {
+        "verdict": "correct",
+        "reason": "Explains missing HF post-processing and explicit BOS/EOS."
+      },
+      "hybrid_context": {
+        "verdict": "declined",
+        "reason": "Hybrid top three miss the annotated passage; abstains."
+      }
+    },
+    {
+      "id": "q05",
+      "embedding": {
+        "verdict": "declined",
+        "reason": "Does not retrieve the queue explanation; declines despite an answer existing in the corpus."
+      },
+      "hybrid_context": {
+        "verdict": "declined",
+        "reason": "Fails to retrieve whole-request queue behavior. Tiny vector lookup is also an ambiguous paraphrase of an embedding inference request."
+      }
+    },
+    {
+      "id": "q06",
+      "embedding": {
+        "verdict": "correct",
+        "reason": "States cancellation must drain before releasing the queue."
+      },
+      "hybrid_context": {
+        "verdict": "declined",
+        "reason": "Fails to use the cancellation-drain rule even though it is present in supplied S2."
+      }
+    },
+    {
+      "id": "q07",
+      "embedding": {
+        "verdict": "partial",
+        "reason": "Mentions local file-read trials without clearly identifying the client as executor."
+      },
+      "hybrid_context": {
+        "verdict": "correct",
+        "reason": "Explicitly identifies client-side execution."
+      }
+    },
+    {
+      "id": "q08",
+      "embedding": {
+        "verdict": "correct",
+        "reason": "Gives NODE_USE_SYSTEM_CA=1."
+      },
+      "hybrid_context": {
+        "verdict": "correct",
+        "reason": "Gives NODE_USE_SYSTEM_CA=1."
+      }
+    },
+    {
+      "id": "q09",
+      "embedding": {
+        "verdict": "correct",
+        "reason": "Identifies the fixed safety margin and explicit max_tokens override."
+      },
+      "hybrid_context": {
+        "verdict": "correct",
+        "reason": "Explains the fixed margin and max_tokens override."
+      }
+    },
+    {
+      "id": "q10",
+      "embedding": {
+        "verdict": "incorrect",
+        "reason": "Misattributes the guard to native Pi compaction instead of pi-clm."
+      },
+      "hybrid_context": {
+        "verdict": "correct",
+        "reason": "Identifies the pi-clm guard."
+      }
+    },
+    {
+      "id": "q11",
+      "embedding": {
+        "verdict": "correct",
+        "reason": "Retains two proposals; three is only a short-chat win."
+      },
+      "hybrid_context": {
+        "verdict": "correct",
+        "reason": "Retains two proposals."
+      }
+    },
+    {
+      "id": "q12",
+      "embedding": {
+        "verdict": "declined",
+        "reason": "Does not retrieve the separate native MTP path explanation."
+      },
+      "hybrid_context": {
+        "verdict": "declined",
+        "reason": "Does not identify why native MTP cannot directly replace DFlash."
+      }
+    },
+    {
+      "id": "q13",
+      "embedding": {
+        "verdict": "declined",
+        "reason": "Does not retrieve the DP4A/Q8 explanation."
+      },
+      "hybrid_context": {
+        "verdict": "partial",
+        "reason": "Mentions Q8 but not the requested DP4A instruction."
+      }
+    },
+    {
+      "id": "q14",
+      "embedding": {
+        "verdict": "incorrect",
+        "reason": "Does not identify width/hybrid or the extra WMMA arithmetic."
+      },
+      "hybrid_context": {
+        "verdict": "incorrect",
+        "reason": "Does not identify width/hybrid and conflates a head-width optimization with the faster alternative."
+      }
+    },
+    {
+      "id": "q15",
+      "embedding": {
+        "verdict": "correct",
+        "reason": "Uses the later cool profile."
+      },
+      "hybrid_context": {
+        "verdict": "incorrect",
+        "reason": "Chooses historical quiet despite later cool evidence in supplied S3."
+      }
+    },
+    {
+      "id": "q16",
+      "embedding": {
+        "verdict": "correct",
+        "reason": "States weight conversion and C++ rebuild are unnecessary."
+      },
+      "hybrid_context": {
+        "verdict": "correct",
+        "reason": "Correctly says no conversion or C++ rebuild is required."
+      }
+    },
+    {
+      "id": "q17",
+      "embedding": {
+        "verdict": "correct_abstention",
+        "reason": "Explicitly identifies absent evidence without inventing the requested fact; wording need not match the prompt marker."
+      },
+      "hybrid_context": {
+        "verdict": "correct_abstention",
+        "reason": "Explicitly identifies absent evidence without inventing the requested fact."
+      }
+    },
+    {
+      "id": "q18",
+      "embedding": {
+        "verdict": "correct_abstention",
+        "reason": "Explicitly identifies absent evidence without inventing the requested fact; wording need not match the prompt marker."
+      },
+      "hybrid_context": {
+        "verdict": "correct_abstention",
+        "reason": "Explicitly identifies absent evidence without inventing the requested fact."
+      }
+    },
+    {
+      "id": "q19",
+      "embedding": {
+        "verdict": "correct_abstention",
+        "reason": "Explicitly identifies absent evidence without inventing the requested fact; wording need not match the prompt marker."
+      },
+      "hybrid_context": {
+        "verdict": "correct_abstention",
+        "reason": "Explicitly identifies absent evidence without inventing the requested fact."
+      }
+    },
+    {
+      "id": "q20",
+      "embedding": {
+        "verdict": "correct_abstention",
+        "reason": "Explicitly identifies absent evidence without inventing the requested fact; wording need not match the prompt marker."
+      },
+      "hybrid_context": {
+        "verdict": "correct_abstention",
+        "reason": "Explicitly identifies absent evidence without inventing the requested fact."
+      }
+    }
+  ],
+  "summary": {
+    "embedding": {
+      "complete_answerable": 7,
+      "answerable_total": 16,
+      "correct_abstentions": 4,
+      "unanswerable_total": 4
+    },
+    "hybrid_context": {
+      "complete_answerable": 8,
+      "answerable_total": 16,
+      "correct_abstentions": 4,
+      "unanswerable_total": 4
+    }
+  }
+}

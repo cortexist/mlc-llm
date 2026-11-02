@@ -267,6 +267,11 @@ See the
 [deployment and client instructions](deploy/xavier/README.md) for CA trust,
 credentials, service management and certificate renewal.
 
+The [runbook search/RAG trial](docs/deploy/xavier_runbook_rag.md) exercises
+EmbeddingGemma 2 retrieval followed by cited Nemotron answers over 251 public
+documentation passages. It includes a reusable client, a keyword-search control,
+frozen questions and complete results, including incorrect answers.
+
 ## Upstream and attribution
 
 [MLC-LLM](https://github.com/mlc-ai/mlc-llm) and its contributors provide the
