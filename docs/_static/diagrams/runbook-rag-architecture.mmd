@@ -1,0 +1,45 @@
+flowchart TB
+    subgraph Client["Client computer"]
+        Docs["Six runbook documents"]
+        Chunk["Split into 251 passages<br/>Each embedding input ≤128 tokens"]
+        Index[("Local index<br/>Vectors + source text + source links")]
+
+        Question["User question"]
+        QueryVector["Query vector"]
+        Semantic["Cosine similarity search"]
+        Keywords["BM25 keyword search"]
+        Hybrid["Combine rankings<br/>Reciprocal-rank fusion, k=60"]
+        Context["Top three passages<br/>Expand by six surrounding lines"]
+        Prompt["Question + retrieved evidence"]
+        Answer["Cited answer + source links"]
+
+        Docs --> Chunk
+        Question --> Keywords
+        QueryVector --> Semantic
+        Index --> Semantic
+        Index --> Keywords
+        Semantic --> Hybrid
+        Keywords --> Hybrid
+        Hybrid --> Context
+        Index --> Context
+        Context --> Prompt
+        Question --> Prompt
+    end
+
+    subgraph Xavier["Jetson AGX Xavier · 32 GB"]
+        API["HTTPS API<br/>TLS + bearer authentication"]
+        Queue["Shared FIFO queue<br/>One complete GPU request at a time"]
+        Embedding["Resident EmbeddingGemma 2<br/>FP32 text encoder"]
+        Nemotron["Resident Nemotron E4B<br/>MLC + DFlash"]
+
+        API --> Queue
+        Queue -->|"/v1/embeddings"| Embedding
+        Queue -->|"/v1/chat/completions"| Nemotron
+    end
+
+    Chunk -->|"Indexing: embed passages once"| API
+    Embedding -->|"Passage vectors → cache"| Index
+    Question -->|"Search: embed question"| API
+    Embedding -->|"Query embedding"| QueryVector
+    Prompt -->|"Generate grounded answer"| API
+    Nemotron --> Answer

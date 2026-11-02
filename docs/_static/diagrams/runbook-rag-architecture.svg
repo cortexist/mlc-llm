@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1680" height="1240" viewBox="0 0 1680 1240" role="img" aria-labelledby="title desc">
+<title id="title">Runbook search and Nemotron RAG architecture</title>
+<desc id="desc">One-time document indexing, query retrieval, and optional answer generation. Client-side vectors and BM25 search use the same passage corpus. EmbeddingGemma 2 and Nemotron remain resident on a Jetson AGX Xavier behind HTTPS, bearer authentication and a shared FIFO GPU queue.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4 L0,8 Z" fill="#475569"/></marker></defs>
+<style>text{font-family:DejaVu Sans,sans-serif;fill:#172b43} .muted{fill:#52657b} .edge{fill:none;stroke:#475569;stroke-width:2.6;marker-end:url(#arrow)} .cache{stroke:#64748b;stroke-dasharray:7 6} .label{font-size:17px;fill:#52657b}</style>
+<rect width="1680" height="1240" fill="#ffffff"/>
+
+<text x="40" y="47" font-size="34" font-weight="bold" text-anchor="start" class="">Runbook search + Nemotron RAG</text>
+<text x="40" y="80" font-size="20" font-weight="normal" text-anchor="start" class="muted">Client-side indexing and retrieval · Two resident GPU workers on Jetson AGX Xavier 32 GB</text>
+<rect x="40" y="110" width="1600" height="210" rx="18" fill="#f8fafc" stroke="#dce5ef"/>
+<text x="65" y="145" font-size="24" font-weight="bold" text-anchor="start" class="">1  Build the local index once</text>
+<text x="65" y="173" font-size="17" font-weight="normal" text-anchor="start" class="muted">Document embeddings are cached and reused for subsequent questions.</text>
+<rect x="85" y="190" width="240" height="85" rx="12" fill="#ffffff" stroke="#b6c6d8" stroke-width="2"/>
+<text x="205.0" y="228.5" font-size="21" font-weight="bold" text-anchor="middle" class="">Runbook files</text>
+<text x="205.0" y="255.5" font-size="17" font-weight="normal" text-anchor="middle" class="muted">Six public source files</text>
+<rect x="385" y="190" width="300" height="85" rx="12" fill="#ffffff" stroke="#b6c6d8" stroke-width="2"/>
+<text x="535.0" y="216.5" font-size="21" font-weight="bold" text-anchor="middle" class="">Split into 251 passages</text>
+<text x="535.0" y="243.5" font-size="17" font-weight="normal" text-anchor="middle" class="muted">≤128 tokens incl. prefixes</text>
+<text x="535.0" y="267.5" font-size="17" font-weight="normal" text-anchor="middle" class="muted">and BOS/EOS</text>
+<rect x="745" y="190" width="300" height="85" rx="12" fill="#e8f3ff" stroke="#3284bc" stroke-width="2"/>
+<text x="895.0" y="216.5" font-size="21" font-weight="bold" text-anchor="middle" class="">EmbeddingGemma 2</text>
+<text x="895.0" y="243.5" font-size="17" font-weight="normal" text-anchor="middle" class="muted">HTTPS /v1/embeddings</text>
+<text x="895.0" y="267.5" font-size="17" font-weight="normal" text-anchor="middle" class="muted">FP32 text encoder</text>
+<rect x="1125" y="190" width="440" height="85" rx="12" fill="#e9f8ef" stroke="#4f9b71" stroke-width="2"/>
+<text x="1345.0" y="228.5" font-size="21" font-weight="bold" text-anchor="middle" class="">Local index</text>
+<text x="1345.0" y="255.5" font-size="17" font-weight="normal" text-anchor="middle" class="muted">Vectors + source text + source links</text>
+<path d="M325 232 H385" class="edge"/>
+<path d="M685 232 H745" class="edge"/>
+<path d="M1045 232 H1125" class="edge"/>
+<rect x="40" y="350" width="1600" height="390" rx="18" fill="#f8fafc" stroke="#dce5ef"/>
+<text x="65" y="385" font-size="24" font-weight="bold" text-anchor="start" class="">2  Retrieve evidence for each question</text>
+<text x="65" y="413" font-size="17" font-weight="normal" text-anchor="start" class="muted">runbook-search returns the passages, scores and pinned source links.</text>
+<rect x="85" y="500" width="225" height="90" rx="12" fill="#ffffff" stroke="#b6c6d8" stroke-width="2"/>
+<text x="197.5" y="553.0" font-size="21" font-weight="bold" text-anchor="middle" class="">User question</text>
+<rect x="370" y="420" width="280" height="90" rx="12" fill="#e8f3ff" stroke="#3284bc" stroke-width="2"/>
+<text x="510.0" y="449.0" font-size="21" font-weight="bold" text-anchor="middle" class="">EmbeddingGemma 2</text>
+<text x="510.0" y="476.0" font-size="17" font-weight="normal" text-anchor="middle" class="muted">Same resident encoder</text>
+<text x="510.0" y="500.0" font-size="17" font-weight="normal" text-anchor="middle" class="muted">HTTPS /v1/embeddings</text>
+<rect x="735" y="420" width="240" height="90" rx="12" fill="#ffffff" stroke="#b6c6d8" stroke-width="2"/>
+<text x="855.0" y="461.0" font-size="21" font-weight="bold" text-anchor="middle" class="">Cosine search</text>
+<text x="855.0" y="488.0" font-size="17" font-weight="normal" text-anchor="middle" class="muted">Query vector vs. cache</text>
+<rect x="735" y="600" width="240" height="90" rx="12" fill="#ffffff" stroke="#b6c6d8" stroke-width="2"/>
+<text x="855.0" y="641.0" font-size="21" font-weight="bold" text-anchor="middle" class="">BM25 search</text>
+<text x="855.0" y="668.0" font-size="17" font-weight="normal" text-anchor="middle" class="muted">Local keyword ranking</text>
+<rect x="1060" y="500" width="220" height="100" rx="12" fill="#ffffff" stroke="#b6c6d8" stroke-width="2"/>
+<text x="1170.0" y="534.0" font-size="21" font-weight="bold" text-anchor="middle" class="">Hybrid ranking</text>
+<text x="1170.0" y="561.0" font-size="17" font-weight="normal" text-anchor="middle" class="muted">Reciprocal-rank fusion</text>
+<text x="1170.0" y="585.0" font-size="17" font-weight="normal" text-anchor="middle" class="muted">k = 60</text>
+<rect x="1360" y="500" width="225" height="100" rx="12" fill="#e9f8ef" stroke="#4f9b71" stroke-width="2"/>
+<text x="1472.5" y="546.0" font-size="21" font-weight="bold" text-anchor="middle" class="">Top 3 passages</text>
+<text x="1472.5" y="573.0" font-size="17" font-weight="normal" text-anchor="middle" class="muted">Source-linked evidence</text>
+<path d="M310 545 H340 V465 H370" class="edge"/>
+<path d="M650 465 H735" class="edge"/>
+<text x="665" y="530" font-size="17" font-weight="normal" text-anchor="start" class="label">query vector</text>
+<path d="M197 590 V645 H735" class="edge"/>
+<text x="425" y="630" font-size="17" font-weight="normal" text-anchor="start" class="label">question text</text>
+<path d="M975 465 H1015 V550 H1060" class="edge"/>
+<path d="M975 645 H1015 V550 H1060" class="edge"/>
+<path d="M1280 550 H1360" class="edge"/>
+<path d="M1345 275 V337 H855 V420" class="edge cache"/>
+<text x="1010" y="331" font-size="17" font-weight="normal" text-anchor="start" class="label">cached vectors</text>
+<path d="M1565 232 H1620 V715 H855 V690" class="edge cache"/>
+<text x="1095" y="706" font-size="17" font-weight="normal" text-anchor="start" class="label">indexed passage text</text>
+<rect x="40" y="770" width="1600" height="245" rx="18" fill="#f8fafc" stroke="#dce5ef"/>
+<text x="65" y="805" font-size="24" font-weight="bold" text-anchor="start" class="">3  Generate an answer (optional)</text>
+<text x="65" y="833" font-size="17" font-weight="normal" text-anchor="start" class="muted">runbook-ask adds the language-model step. Inspect the evidence: citations do not guarantee correctness.</text>
+<rect x="85" y="865" width="360" height="90" rx="12" fill="#ffffff" stroke="#b6c6d8" stroke-width="2"/>
+<text x="265.0" y="906.0" font-size="21" font-weight="bold" text-anchor="middle" class="">Expand retrieved evidence</text>
+<text x="265.0" y="933.0" font-size="17" font-weight="normal" text-anchor="middle" class="muted">Six source lines before / after</text>
+<rect x="505" y="865" width="290" height="90" rx="12" fill="#ffffff" stroke="#b6c6d8" stroke-width="2"/>
+<text x="650.0" y="894.0" font-size="21" font-weight="bold" text-anchor="middle" class="">Build RAG prompt</text>
+<text x="650.0" y="921.0" font-size="17" font-weight="normal" text-anchor="middle" class="muted">Question + evidence</text>
+<text x="650.0" y="945.0" font-size="17" font-weight="normal" text-anchor="middle" class="muted">Instructions to cite / abstain</text>
+<rect x="855" y="865" width="310" height="90" rx="12" fill="#e8f3ff" stroke="#3284bc" stroke-width="2"/>
+<text x="1010.0" y="894.0" font-size="21" font-weight="bold" text-anchor="middle" class="">Nemotron E4B</text>
+<text x="1010.0" y="921.0" font-size="17" font-weight="normal" text-anchor="middle" class="muted">HTTPS /v1/chat/completions</text>
+<text x="1010.0" y="945.0" font-size="17" font-weight="normal" text-anchor="middle" class="muted">MLC + DFlash</text>
+<rect x="1225" y="865" width="350" height="90" rx="12" fill="#e9f8ef" stroke="#4f9b71" stroke-width="2"/>
+<text x="1400.0" y="906.0" font-size="21" font-weight="bold" text-anchor="middle" class="">Answer + source links</text>
+<text x="1400.0" y="933.0" font-size="17" font-weight="normal" text-anchor="middle" class="muted">Review against original passages</text>
+<path d="M1472 600 V844 H265 V865" class="edge"/>
+<text x="1225" y="838" font-size="17" font-weight="normal" text-anchor="start" class="label">retrieved passages</text>
+<path d="M445 910 H505" class="edge"/>
+<path d="M795 910 H855" class="edge"/>
+<path d="M1165 910 H1225" class="edge"/>
+<text x="65" y="992" font-size="18" font-weight="normal" text-anchor="start" class="muted">Source expansion happens after retrieval; it does not increase the embedding encoder’s 128-token limit.</text>
+<rect x="40" y="1040" width="1600" height="130" rx="18" fill="#eef5fc" stroke="#b8d2e8"/>
+<text x="65" y="1071" font-size="21" font-weight="bold" text-anchor="start" class="">Shared Xavier serving path — used by every blue API block above</text>
+<rect x="85" y="1090" width="260" height="58" rx="12" fill="#ffffff" stroke="#b6c6d8" stroke-width="2"/>
+<text x="215.0" y="1127.0" font-size="21" font-weight="bold" text-anchor="middle" class="">HTTPS / TLS</text>
+<rect x="405" y="1090" width="250" height="58" rx="12" fill="#ffffff" stroke="#b6c6d8" stroke-width="2"/>
+<text x="530.0" y="1127.0" font-size="21" font-weight="bold" text-anchor="middle" class="">Bearer auth</text>
+<rect x="715" y="1090" width="360" height="58" rx="12" fill="#ffffff" stroke="#b6c6d8" stroke-width="2"/>
+<text x="895.0" y="1127.0" font-size="21" font-weight="bold" text-anchor="middle" class="">Shared FIFO GPU queue</text>
+<rect x="1135" y="1090" width="440" height="58" rx="12" fill="#e8f3ff" stroke="#3284bc" stroke-width="2"/>
+<text x="1355.0" y="1127.0" font-size="21" font-weight="bold" text-anchor="middle" class="">Resident model workers</text>
+<path d="M345 1119 H405" class="edge"/>
+<path d="M655 1119 H715" class="edge"/>
+<path d="M1075 1119 H1135" class="edge"/>
+<text x="40" y="1210" font-size="18" font-weight="normal" text-anchor="start" class="muted">Blue: GPU inference · White: client work · Dashed: cached data</text>
+<text x="1640" y="1210" font-size="18" font-weight="normal" text-anchor="end" class="muted">No model reload · One complete GPU request at a time</text>
+</svg>

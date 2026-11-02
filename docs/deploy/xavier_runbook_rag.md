@@ -11,6 +11,25 @@ On this small development set, hybrid retrieval finds annotated evidence in
 the top three for **11/16 questions**, while Nemotron gives complete correct
 answers for only **8/16**. Review the source links before acting on an answer.
 
+## System architecture
+
+![Runbook indexing, retrieval and answer generation on client and Xavier](../_static/diagrams/runbook-rag-architecture.png)
+
+[SVG diagram](../_static/diagrams/runbook-rag-architecture.svg) ·
+[Mermaid source](../_static/diagrams/runbook-rag-architecture.mmd).
+The SVG is an editable layout of the same architecture; the PNG is rendered
+from that SVG and needs no Mermaid support. To regenerate the PNG:
+
+```bash
+rsvg-convert -o docs/_static/diagrams/runbook-rag-architecture.png \
+  docs/_static/diagrams/runbook-rag-architecture.svg
+```
+
+The two embedding calls in the diagram use the same resident encoder. All blue
+API blocks pass through the shared authenticated FIFO. `runbook-search` stops
+at retrieved evidence; `runbook-ask` adds the Nemotron call. Switching workers
+does not reload weights.
+
 ## Corpus and evaluation method
 
 The frozen corpus is the main README, HTTPS deployment guide, and four Xavier
