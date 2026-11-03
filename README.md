@@ -1,47 +1,59 @@
 ![MLC-LLM for Jetson AGX Xavier](docs/_static/img/945-82972-0040-000.png)
 
-This fork runs **NVIDIA Nemotron 3.5 Bolt E4B** on **Jetson AGX Xavier 32 GB**
-using JetPack 5 / CUDA 11.4, with DFlash speculative decoding and kernels
-suited to Xavier's Volta GPU. The latest deployed configuration reaches
-**327 tok/s prefill at 161 tokens**, **520 tok/s at 448 tokens**, and
-**416 tok/s at 910 tokens** in the November 2 measurements below.
+This fork runs **NVIDIA Nemotron 3.5 Bolt E4B** and **Gemma4 Unified 12B** on
+**Jetson AGX Xavier 32 GB**, using JetPack 5 / CUDA 11.4. It adds speculative
+decoding and kernels suited to Xavier's Volta GPU. Fresh November 2 measurements
+compare both engines at exactly **161 / 448 / 910 prompt tokens** below.
 
 Based on upstream MLC-LLM `44fd06d0`. DFlash builds on
 [Lev Stambler's implementation](https://github.com/Lev-Stambler/mlc-llm--DFlash/tree/b6c7bf7d269fd4127fd1a48c478b01d9dc8ff42b).
 The original project overview is preserved in [README.upstream.md](README.upstream.md).
 
-## Latest deployed Nemotron benchmarks — November 2, 2026
+## Current benchmarks — November 2, 2026
 
-Both arms use `hybrid-width` attention. The deployed fork adds vectorized
-Q4-to-FP16 weight expansion while retaining cuBLAS's algorithm selection.
-This is a matched comparison against the preceding fork configuration.
-All rates are prefill tokens/second.
+All rates are **tokens/second**; unqualified columns are this MLC fork.
+Each cell averages **two measured runs after one warmup**, with **128 forced
+output tokens**. Prefill comes from plain mode. Each engine pair receives
+identical token IDs with thinking/prefix reuse disabled. Targets use the same
+source checkpoint: MLC q4f16_1 versus llama.cpp Q4_K_M, F16 assistants/FP16 KV.
 
-| Prompt tokens | Fork before vector expansion | Deployed fork | Gain |
-|---|---:|---:|---:|
-| 161 | 255.10 | **327.11** | **28.23%** |
-| 448 | 451.76 | **520.17** | **15.14%** |
-| 910 | 374.64 | **416.33** | **11.13%** |
+### Nemotron 3.5 Bolt E4B
 
-**Method:** Xavier MAXN, q4f16_1 target, F16 DFlash assistant with two proposals,
-one sequence, **16K context**, 512-token prefill chunks, prefix caching disabled,
-and **16 forced output tokens**. The order is old/new/old, with one warmup
-and two measured requests per prompt in each arm; the control pools the four
-bracketing measurements. All six output strings per prompt match exactly.
-The short decode samples serve as regression checks.
+16K context, 512-token chunks/microbatches, one sequence. The fork uses
+`hybrid-width` attention and vectorized Q4 expansion. Both speculative
+columns use **DFlash with two proposals** (including `llama decode MTP`).
 
-The latest longer prompt is **910 tokens**. The **1,768-token** results in the
-historical engine comparisons below were measured with an earlier build;
-that length has not been remeasured with the latest deployed configuration.
-The historical comparisons use 8K context and 128 output tokens, so their
-decode rates and complete-request latencies belong to that older protocol.
+| Prompt tokens | Prefill | llama prefill | Decode plain | llama decode plain | Decode MTP/DFlash | llama decode MTP |
+|---|---:|---:|---:|---:|---:|---:|
+| 161 | 329.40 | 216.42 | 22.77 | 18.74 | 30.46 | 22.71 |
+| 448 | 517.58 | 352.96 | 19.19 | 18.60 | 29.61 | 23.04 |
+| 910 | 423.65 | 357.78 | 18.20 | 18.49 | 30.21 | 20.12 |
 
-See the [weight-expansion results, build instructions and rollback](docs/deploy/xavier_prefill_linear.md)
-and [machine-readable measurements](docs/benchmarks/xavier/prefill-linear-summary.json).
-The preceding [layer-aware attention experiment](docs/deploy/xavier_prefill_followup.md)
-measured a further 12–13% prefill improvement at 448/910 tokens against its
-own control. Separate shape-specific dense GEMM tuning added 0.6–3.1% in
-short trials and remains experimental.
+### Gemma4 Unified 12B Heretic
+
+4K context, 512-token chunks/microbatches, one sequence. Both engines use the
+**same Heretic source weights**, freshly converted to GGUF for llama.cpp.
+Both speculative columns use the **original QAT native MTP assistant, with
+two proposals**. MLC's current direct-VM controller includes CPU shared-state
+copies in its prefill, plain control and MTP timings.
+
+| Prompt tokens | Prefill | llama prefill | Decode plain | llama decode plain | Decode MTP/DFlash | llama decode MTP |
+|---|---:|---:|---:|---:|---:|---:|
+| 161 | 89.74 | 87.10 | 11.34 | 9.88 | 13.23 | 14.00 |
+| 448 | 110.46 | 138.30 | 10.25 | 9.74 | 12.37 | 12.90 |
+| 910 | 75.78 | 139.05 | 8.92 | 9.62 | 9.44 | 12.78 |
+
+**Qualification:** Some 128-token greedy plain/speculative continuations
+differ in both engines; output comparisons and hashes are recorded. Forced
+continuation includes tokens past EOS. These are throughput measurements,
+with no claim of identical generation or broad model-quality validation.
+The 910-token case is the longest input in this refresh.
+
+[Protocol, matching-checkpoint conversion and reproduction](docs/deploy/xavier_current_benchmarks.md)
+· [Per-run measurements and artifact hashes](docs/benchmarks/xavier/current-matrix-summary.json).
+The earlier [attention-width](docs/deploy/xavier_prefill_followup.md) and
+[weight-expansion](docs/deploy/xavier_prefill_linear.md) experiments retain
+their separate 16-output-token controls and optimization results.
 
 <details>
 <summary>Historical fork versus baseline MLC and llama.cpp — October 31–November 1 (161 / 448 / 1,768 tokens)</summary>
