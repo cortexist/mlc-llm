@@ -431,10 +431,12 @@ class EngineImpl : public Engine {
     }
     EngineConfig engine_config = engine_config_res.Unwrap();
     if (engine_config->speculative_mode == SpeculativeMode::kDFlash &&
-        engine_config->prefix_cache_mode != PrefixCacheMode::kDisable) {
-      return TResult::Error(
-          "DFlash requires prefix_cache_mode='disable': target prefix entries "
-          "do not contain the draft's context features.");
+        std::getenv("MLC_XAVIER_LINEAR_FORK") &&
+        std::string(std::getenv("MLC_XAVIER_LINEAR_FORK")) == "1") {
+      auto supported = Function::GetGlobal("vm.builtin.xavier_linear_fork_supported");
+      if (!supported.has_value() || !supported.value()().cast<bool>()) {
+        return TResult::Error("Linear DFlash prefix copying requires the patched TVM runtime");
+      }
     }
     {
       if (engine_config->prefix_cache_mode == PrefixCacheMode::kRadix) {
@@ -442,8 +444,15 @@ class EngineImpl : public Engine {
             static_cast<size_t>(engine_config->prefix_cache_max_num_recycling_seqs),
             [engine_ptr = n.get()](int64_t seq_id) {
               RemoveRequestFromModel(engine_ptr->estate_, seq_id, engine_ptr->models_);
+              // Draft context has exactly the same lifetime as its target KV sequence.
+              if (!engine_ptr->model_workspaces_.empty()) {
+                engine_ptr->model_workspaces_[0].dflash_projected_target_hidden->erase(seq_id);
+              }
               engine_ptr->estate_->id_manager.RecycleId(seq_id);
-            });
+            },
+            /*recycling_only=*/engine_config->speculative_mode == SpeculativeMode::kDFlash &&
+                !(std::getenv("MLC_XAVIER_LINEAR_FORK") &&
+                  std::string(std::getenv("MLC_XAVIER_LINEAR_FORK")) == "1"));
       } else if (engine_config->prefix_cache_mode == PrefixCacheMode::kDisable) {
         n->estate_->prefix_cache = PrefixCache::CreateNoPrefixCache();
       } else {
@@ -524,6 +533,9 @@ class EngineImpl : public Engine {
   void Reset() final {
     AbortAllRequests();
     estate_->Reset();
+    for (auto& workspace : model_workspaces_) {
+      workspace.dflash_projected_target_hidden->clear();
+    }
     for (Model model : models_) {
       model->Reset();
     }
@@ -797,7 +809,7 @@ class EngineImpl : public Engine {
     }
     auto& states = *model_workspaces_[0].dflash_projected_target_hidden;
     for (auto it = states.begin(); it != states.end();) {
-      if (!active.count(it->first))
+      if (!active.count(it->first) && !estate_->prefix_cache->HasSequence(it->first))
         it = states.erase(it);
       else
         ++it;

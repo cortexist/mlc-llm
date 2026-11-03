@@ -1,0 +1,56 @@
+--- a/src/runtime/vm/paged_kv_cache.cc
++++ b/src/runtime/vm/paged_kv_cache.cc
+@@ -31,6 +31,7 @@
+ #include <tvm/runtime/tensor.h>
+ 
+ #include <algorithm>
++#include <cstdlib>
+ #include <iomanip>
+ #include <limits>
+ #include <locale>
+@@ -686,6 +687,37 @@
+       fork_pos = parent_it->second.seq_length;
+     }
+ 
++    // Opt-in safe cloning for per-layer sliding attention. Shared block depths
++    // select a window independently per depth and can include obsolete keys.
++    // Copy into a single independent block, preserving absolute positions.
++    const char* linear_fork = std::getenv("MLC_XAVIER_LINEAR_FORK");
++    if (support_layer_sliding_window_ && !support_sliding_window_ &&
++        linear_fork != nullptr && std::string(linear_fork) == "1") {
++      const Block& source = global_block_pool_[parent_it->second.last_block_idx];
++      TVM_FFI_ICHECK_EQ(source.parent_idx, -1) << "Linear fork requires a linear source";
++      TVM_FFI_ICHECK_EQ(source.start_pos, 0);
++      int32_t count = (fork_pos + page_size_ - 1) / page_size_;
++      TVM_FFI_ICHECK_LE(count, static_cast<int32_t>(free_page_ids_.size()));
++      std::vector<int32_t> source_pages(source.page_ids.begin(), source.page_ids.begin() + count);
++      int32_t child_block_idx = GetFreeBlock();
++      global_block_pool_[child_block_idx].start_pos = 0;
++      global_block_pool_[child_block_idx].seq_length = fork_pos;
++      if (copy_stream_ != compute_stream_) {
++        DeviceAPI::Get(device_)->SyncStreamFromTo(device_, compute_stream_, copy_stream_);
++      }
++      for (int32_t i = 0; i < count; ++i) {
++        int32_t dst = GetFreePage();
++        global_block_pool_[child_block_idx].page_ids.push_back(dst);
++        CopySinglePage(source_pages[i], dst, std::min<int64_t>(page_size_, fork_pos - i * page_size_));
++      }
++      if (copy_stream_ != compute_stream_) {
++        DeviceAPI::Get(device_)->SyncStreamFromTo(device_, copy_stream_, compute_stream_);
++      }
++      seq_map_.insert({child_seq_id, Sequence(&global_block_pool_, child_block_idx)});
++      dirty_aux_data_device_ = true;
++      return;
++    }
++
+     if (parent_it->second.sliding_window_size != -1) {
+       // If forked sequence has been enabled sliding window, check the forked position is within
+       // sliding window sink size.
+@@ -3284,6 +3316,7 @@
+ //-------------------------------------------------
+ 
+ TVM_FFI_STATIC_INIT_BLOCK() {
++  tvm::ffi::reflection::GlobalDef().def("vm.builtin.xavier_linear_fork_supported", []() { return true; });
+   namespace refl = tvm::ffi::reflection;
+   refl::GlobalDef().def_packed(
+       "vm.builtin.paged_attention_kv_cache_create", [](ffi::PackedArgs args, ffi::Any* rv) {

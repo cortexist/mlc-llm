@@ -21,6 +21,19 @@ except ImportError:
 
 
 class Gemma4ToolsTest(unittest.TestCase):
+    def test_whitespace_in_native_call_header(self):
+        for header in ("call:bash", "call: bash", "\ncall:\n bash", "  call:\tread"):
+            with self.subTest(header=header):
+                _, calls = MODULE.parse_output(
+                    "<|tool_call>" + header + '{command:<|"|>ls -F ~/Workspaces<|"|>}<tool_call|>',
+                    {"bash", "read"},
+                )
+                self.assertEqual(calls[0]["function"]["name"], header.split(":")[1].strip())
+        with self.assertRaisesRegex(MODULE.ToolFormatError, "undeclared.*workspace-index"):
+            MODULE.parse_output("<|tool_call>call: workspace-index{}<tool_call|>", {"bash"})
+        with self.assertRaisesRegex(MODULE.ToolFormatError, "invalid native"):
+            MODULE.parse_output("<|tool_call>call: {}<tool_call|>", {"bash"})
+
     def test_nested_arguments_and_multiple_calls(self):
         text = (
             'Checking. <|tool_call>call:read{path:<|"|>/tmp/a\\b\n.txt<|"|>,'
@@ -107,6 +120,8 @@ class Gemma4ToolsTest(unittest.TestCase):
 class AdapterTest(unittest.IsolatedAsyncioTestCase):
     async def test_http_shapes_and_tool_result_history(self):
         class Usage:
+            extra = {"prefill_tokens": 3}
+
             def model_dump(self, **kwargs):
                 return {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
 
@@ -153,6 +168,7 @@ class AdapterTest(unittest.IsolatedAsyncioTestCase):
             json.loads(message["tool_calls"][0]["function"]["arguments"]), {"path": "/tmp/a"}
         )
         self.assertTrue(adapter.engine.closed)
+        self.assertEqual(result["usage"]["prompt_tokens_details"]["cached_tokens"], 7)
         self.assertEqual(adapter.engine.request.prompt, [2, 105, 42])
 
         payload["messages"].extend(
@@ -173,6 +189,7 @@ class AdapterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[1]["choices"][0]["delta"]["tool_calls"][0]["index"], 0)
         self.assertEqual(events[2]["choices"][0]["finish_reason"], "tool_calls")
         self.assertEqual(events[3]["usage"]["total_tokens"], 15)
+        self.assertEqual(events[3]["usage"]["prompt_tokens_details"]["cached_tokens"], 7)
         self.assertEqual(chunks[-1], "data: [DONE]\n\n")
         self.assertEqual(adapter.tokenizer.messages[-1]["content"], "actual contents")
 

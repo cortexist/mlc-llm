@@ -1,0 +1,120 @@
+[
+  {
+    "answers": {
+      "spam": {
+        "type": "noul",
+        "noul": 0.0641242133406487
+      },
+      "phishing": {
+        "type": "noul",
+        "noul": 0.07055520523369947
+      },
+      "priority": {
+        "type": "noul",
+        "noul": 0.9689165291114507
+      }
+    },
+    "usage": {
+      "input_tokens": 428,
+      "output_tokens": 0
+    },
+    "seconds": 178.88240686800054,
+    "state": {
+      "sender": {
+        "name": "alex",
+        "address": "alex@example.com"
+      },
+      "recipients": [
+        "user@example.com"
+      ],
+      "subject": "Project meeting tomorrow",
+      "summary": "Please confirm our project meeting at 10am tomorrow. We need your approval before the deadline.",
+      "headers": "Authentication-Results: spf=pass; dkim=pass; dmarc=pass"
+    },
+    "questions": {
+      "spam": {
+        "type": "noul",
+        "instructions": "Is this email spam: unsolicited bulk marketing, a scam, or mail the recipient never asked for? Receipts, subscribed newsletters, account notices and real correspondence are not spam. Use `headers` as evidence: authentication results, the Received chain, and List-* headers.",
+        "criteria": {
+          "true": "Unsolicited bulk, scam, or unwanted marketing mail.",
+          "false": "Mail the recipient plausibly wants: correspondence, receipts, notices, or subscribed content."
+        }
+      },
+      "phishing": {
+        "type": "noul",
+        "instructions": "Is this email a phishing attempt: does `sender` impersonate a trusted party to obtain credentials, payment, or personal data (look-alike domain, urgent account threat, login or payment request)? In `headers`, failing SPF/DKIM/DMARC, a Return-Path or Received chain from an unrelated domain, or a Reply-To elsewhere are strong evidence.",
+        "criteria": {
+          "true": "Impersonates a trusted party to extract credentials, money, or personal data.",
+          "false": "A genuine message from who `sender` claims to be, or ordinary mail with no such lure."
+        }
+      },
+      "priority": {
+        "type": "noul",
+        "instructions": "Does this email need the recipient's personal attention or a timely response: a real person writing to them, a security or account alert, a deadline, or a time-sensitive request?",
+        "criteria": {
+          "true": "Needs the recipient's personal attention or a timely response.",
+          "false": "Routine automated, promotional, or informational mail that can wait."
+        }
+      }
+    }
+  },
+  {
+    "answers": {
+      "spam": {
+        "type": "noul",
+        "noul": 0.2964482831224394
+      },
+      "phishing": {
+        "type": "noul",
+        "noul": 0.1422107323942651
+      },
+      "priority": {
+        "type": "noul",
+        "noul": 0.9700313004090332
+      }
+    },
+    "usage": {
+      "input_tokens": 1340,
+      "output_tokens": 0
+    },
+    "seconds": 179.83647319299962,
+    "state": {
+      "sender": {
+        "name": "alex",
+        "address": "alex@example.com"
+      },
+      "recipients": [
+        "user@example.com"
+      ],
+      "subject": "Approval required by tomorrow",
+      "summary": "Please review and approve the release by tomorrow. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Please reply with approval before 10am tomorrow.",
+      "headers": "Authentication-Results: spf=pass; dkim=pass; dmarc=pass"
+    },
+    "questions": {
+      "spam": {
+        "type": "noul",
+        "instructions": "Is this email spam: unsolicited bulk marketing, a scam, or mail the recipient never asked for? Receipts, subscribed newsletters, account notices and real correspondence are not spam. Use `headers` as evidence: authentication results, the Received chain, and List-* headers.",
+        "criteria": {
+          "true": "Unsolicited bulk, scam, or unwanted marketing mail.",
+          "false": "Mail the recipient plausibly wants: correspondence, receipts, notices, or subscribed content."
+        }
+      },
+      "phishing": {
+        "type": "noul",
+        "instructions": "Is this email a phishing attempt: does `sender` impersonate a trusted party to obtain credentials, payment, or personal data (look-alike domain, urgent account threat, login or payment request)? In `headers`, failing SPF/DKIM/DMARC, a Return-Path or Received chain from an unrelated domain, or a Reply-To elsewhere are strong evidence.",
+        "criteria": {
+          "true": "Impersonates a trusted party to extract credentials, money, or personal data.",
+          "false": "A genuine message from who `sender` claims to be, or ordinary mail with no such lure."
+        }
+      },
+      "priority": {
+        "type": "noul",
+        "instructions": "Does this email need the recipient's personal attention or a timely response: a real person writing to them, a security or account alert, a deadline, or a time-sensitive request?",
+        "criteria": {
+          "true": "Needs the recipient's personal attention or a timely response.",
+          "false": "Routine automated, promotional, or informational mail that can wait."
+        }
+      }
+    }
+  }
+]

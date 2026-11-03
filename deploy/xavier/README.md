@@ -71,7 +71,7 @@ trust store with the local CA. An explicit tailnet connectivity test can use
 ## Installed services
 
 `mlc-nemotron.service` runs as `zero` from the validated experimental checkout
-at `/home/zero/Workspaces/mlc-dflash-work`. It uses that checkout's Python
+at `~/Workspaces/mlc-dflash-work`. It uses that checkout's Python
 code, runtime, converted weights and compiled model libraries. The API listens
 on `127.0.0.1:8000`. Nginx terminates TLS on port 443, permits LAN/loopback and
 tailnet clients, and passes streaming responses without buffering. Public IPv6
@@ -80,8 +80,14 @@ clients are denied. No router port forwarding or Tailscale Funnel is configured.
 The model configuration is the measured Nemotron target, F16 DFlash draft,
 two proposals (`spec_draft_length=3`), `hybrid-width` prefill via the optional
 `prefill-width.conf` drop-in, one active sequence,
-16K context and prefix caching disabled. Multiple HTTP clients can queue
-requests. The service restarts on failure, with a bounded restart rate.
+16K context. The optional `prefix-cache.conf` drop-in enables
+`MLC_NEMOTRON_PREFIX_CACHE=radix` with one recycled prefix; the code defaults to
+`disable`. See the [DFlash prefix-reuse checks and rollback](../../docs/deploy/xavier_dflash_prefix_cache.md).
+The optional [protected service-prefix profile](../../docs/deploy/xavier_service_prefix.md)
+adds a server-owned policy, safe independent KV prefix copies and two recent
+conversation entries. Its aggregate KV budget is 32K; each request still has a
+16K context. Pi's search routing no longer changes the system prompt.
+Multiple HTTP clients can queue requests. The service restarts on failure, with a bounded restart rate.
 Nginx, MLC and tailscaled are enabled at boot.
 
 The [November 2 prefill follow-up](../../docs/deploy/xavier_prefill_followup.md)
@@ -324,3 +330,36 @@ run. Full-context peak RAM, sustained operation and long-context quality remain
 unqualified. The power issue is deferred; the short checks and advertised
 capacity do not guarantee 8 GiB available under every full-context workload.
 See [the saved context/tool results](../../docs/benchmarks/xavier/context-tools-summary.json).
+
+## Buffered JSON-object clients
+
+Startup reserves Nemotron's 512-token prefill workspace on the serving event
+loop before loading the embedding and decision workers. This avoids the late
+1 GiB NvMap allocation failure observed with a mail-classification prompt when
+specialists loaded first. Readiness is reached only after the warmup and all
+configured workers finish loading.
+
+Native tool headers accept whitespace after the tool marker and `call:`. For
+example, `call: bash{...}` and `call:bash{...}` both map to the declared `bash`
+tool. Unknown names and malformed arguments remain errors; the adapter never
+executes tools or guesses a replacement name. This fixes a Pi/Nemotron failure
+that previously reported a valid spaced header as an invalid tool name.
+
+The experimental DFlash engine can commit tokens rejected by XGrammar and stop
+its worker thread. The Python adapter therefore handles non-streaming chat
+`response_format: {"type":"json_object"}` by generating without grammar
+constraints, then parsing and validating the complete object before returning
+it. Invalid/incomplete/non-object output returns HTTP 502, never a fabricated
+result. The response header `X-Xavier-JSON-Mode: validated-output` identifies
+this path. Clients should explicitly request the desired JSON in their prompt.
+Schema-constrained JSON, streaming JSON, JSON with logprobs, and JSON through
+the legacy completions endpoint are rejected with HTTP 400.
+
+This supports clients such as agentic-mail using Nemotron for both drafting
+and structured mail decisions. Set the language-model API root to the HTTPS
+`/v1` endpoint, model `nemotron`, API key, and temperature 0. Leave the separate
+System One decision API unset to use the application's language-model fallback.
+The [d1 System One adapter](../../docs/deploy/xavier_d1_decisions.md) supports
+the application's JSON state and `/systemone` protocol with a separately built
+2K input bucket. Set the decision model to `d1-omni-2b` and keep `nemotron`
+for drafting; inputs beyond the packed capacity are rejected without truncation.

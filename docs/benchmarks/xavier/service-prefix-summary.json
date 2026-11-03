@@ -1,0 +1,230 @@
+{
+  "date": "2026-11-02",
+  "device": "Jetson AGX Xavier 32 GB",
+  "model": "NVIDIA Nemotron 3.5 Bolt E4B",
+  "policy_version": "69bf09289433209c",
+  "protected_tokens": 342,
+  "context_tokens": 16384,
+  "aggregate_kv_tokens": 32768,
+  "idle_conversation_limit": 2,
+  "speculative_mode": "DFlash, two proposals",
+  "prefill_chunk_tokens": 512,
+  "pi": [
+    {
+      "case": "workspace_nemotron",
+      "seconds": 27.261789021082222,
+      "first_text_seconds": 27.256728334003128,
+      "new_prefill_tokens": 3678,
+      "cached_tokens": 342,
+      "output_tokens": 211,
+      "model_tool_calls": [],
+      "automatic_evidence_messages": 1
+    },
+    {
+      "case": "france_after_search",
+      "seconds": 0.6612808400532231,
+      "first_text_seconds": 0.6602304480038583,
+      "new_prefill_tokens": 19,
+      "cached_tokens": 4230,
+      "output_tokens": 4,
+      "model_tool_calls": [],
+      "automatic_evidence_messages": 0
+    },
+    {
+      "case": "git_unstage",
+      "seconds": 1.4676282840082422,
+      "first_text_seconds": 1.4667117680655792,
+      "new_prefill_tokens": 17,
+      "cached_tokens": 4252,
+      "output_tokens": 18,
+      "model_tool_calls": [],
+      "automatic_evidence_messages": 0
+    },
+    {
+      "case": "workspace_orin_nano",
+      "seconds": 14.02887284499593,
+      "first_text_seconds": 14.027757745003328,
+      "new_prefill_tokens": 1259,
+      "cached_tokens": 4286,
+      "output_tokens": 88,
+      "model_tool_calls": [],
+      "automatic_evidence_messages": 1
+    },
+    {
+      "case": "france_after_second_search",
+      "seconds": 0.6432047369889915,
+      "first_text_seconds": 0.6423542100237682,
+      "new_prefill_tokens": 19,
+      "cached_tokens": 5632,
+      "output_tokens": 3,
+      "model_tool_calls": [],
+      "automatic_evidence_messages": 0
+    }
+  ],
+  "protected_cases": [
+    {
+      "case": "client_a",
+      "seconds": 0.9336139420047402,
+      "cached_tokens": 342,
+      "prompt_tokens": 375,
+      "output_tokens": 10
+    },
+    {
+      "case": "client_b",
+      "seconds": 0.5220590079989051,
+      "cached_tokens": 343,
+      "prompt_tokens": 375,
+      "output_tokens": 10
+    },
+    {
+      "case": "client_a_again",
+      "seconds": 0.435422597991419,
+      "cached_tokens": 374,
+      "prompt_tokens": 375,
+      "output_tokens": 10
+    },
+    {
+      "case": "client_c",
+      "seconds": 0.520041064999532,
+      "cached_tokens": 343,
+      "prompt_tokens": 375,
+      "output_tokens": 10
+    },
+    {
+      "case": "client_a_after_c",
+      "seconds": 0.4399914699897636,
+      "cached_tokens": 374,
+      "prompt_tokens": 375,
+      "output_tokens": 10
+    },
+    {
+      "case": "client_d",
+      "seconds": 0.5176627869950607,
+      "cached_tokens": 343,
+      "prompt_tokens": 375,
+      "output_tokens": 10
+    },
+    {
+      "case": "client_e",
+      "seconds": 0.5187944209901616,
+      "cached_tokens": 343,
+      "prompt_tokens": 375,
+      "output_tokens": 10
+    },
+    {
+      "case": "client_a_after_eviction",
+      "seconds": 0.5200118189968634,
+      "cached_tokens": 343,
+      "prompt_tokens": 375,
+      "output_tokens": 10
+    },
+    {
+      "case": "raw_100",
+      "seconds": 2.035132843986503,
+      "cached_tokens": 0,
+      "prompt_tokens": 700,
+      "output_tokens": 8
+    },
+    {
+      "case": "raw_101",
+      "seconds": 2.235158424009569,
+      "cached_tokens": 0,
+      "prompt_tokens": 700,
+      "output_tokens": 8
+    },
+    {
+      "case": "raw_102",
+      "seconds": 2.2349654650024604,
+      "cached_tokens": 0,
+      "prompt_tokens": 700,
+      "output_tokens": 8
+    },
+    {
+      "case": "after_raw_eviction",
+      "seconds": 0.6143120280030416,
+      "cached_tokens": 342,
+      "prompt_tokens": 375,
+      "output_tokens": 10
+    },
+    {
+      "case": "after_cancel",
+      "seconds": 0.5213379000051646,
+      "cached_tokens": 343,
+      "prompt_tokens": 375,
+      "output_tokens": 10
+    }
+  ],
+  "long_regression": {
+    "prompt_tokens": 4346,
+    "output_tokens": 160,
+    "matches_uncached_reference_text": true,
+    "seconds": 16.216267162992153,
+    "usage": {
+      "prompt_tokens": 4346,
+      "completion_tokens": 160,
+      "total_tokens": 4506,
+      "extra": {
+        "prompt_tokens": 4346,
+        "completion_tokens": 160,
+        "prefill_tokens": 1876,
+        "decode_tokens": 159,
+        "jump_forward_tokens": 0,
+        "prefill_tokens_per_s": 169.74808962206316,
+        "decode_tokens_per_s": 30.816821184695392,
+        "end_to_end_latency_s": 16.211190598,
+        "ttft_s": 11.051670768000001,
+        "inter_token_latency_s": 0.10131994123750002
+      }
+    }
+  },
+  "validation": {
+    "cpu_service_prompt_tests": 3,
+    "cpu_tool_tests": 8,
+    "stable_pi_system_and_tool_hashes": true,
+    "https": {
+      "tool_result_answer": "ORBIT-4827",
+      "repeated_tool_result_equal": true,
+      "repeated_cached_tokens": 474,
+      "after_cancel_answer": "391",
+      "embedding_dimensions": 768,
+      "models": [
+        "nemotron",
+        "d1-omni-2b",
+        "embeddinggemma-2"
+      ],
+      "json_result": {
+        "ok": true
+      },
+      "plain_sse_chunks": 8,
+      "plain_sse_first_s": 0.3136415740009397,
+      "native_weather_tool_call": true
+    }
+  },
+  "limitations": [
+    "Individual latency samples, not medians",
+    "Tool-enabled generations remain buffered",
+    "New or evicted client context still needs prefill",
+    "Search outputs differ from earlier runs",
+    "No full-context or sustained-load qualification",
+    "Original Pi run omitted project context files; large client instruction files add cold prefill cost"
+  ],
+  "memory_snapshot": {
+    "available_mib": 10274,
+    "swap_used_mib": 3,
+    "resident_models": [
+      "nemotron",
+      "d1-omni-2b",
+      "embeddinggemma-2"
+    ],
+    "full_context_qualified": false
+  },
+  "artifact_sha256": {
+    "libmlc_llm_module.so": "c86bb29a1f2535e83879ddcea17c3a2d8e5d807d4bb726072a66d2f9f1e038f7",
+    "libtvm_runtime_extra.so": "405bab2faf81c625ec5a81b29d9f34cf49f4e485a7c500cfceb58b9fef7dc9df",
+    "xavier_service_prompt.py": "f86bcecfbbff7281f685e23e38d61bcf153415e243d10b05d634d96dc90bfae8",
+    "serve_xavier_nemotron.py": "b7cb38598de122a1263f2f2f9cce8ea6d44e359d1863a1a29029696633764b81",
+    "gemma4_tools.py": "0b5138d49ef05d746754c7eed7b9606c28967acb45f3e09aa6fa34098ed7c9f0",
+    "prefix_cache.cc": "5d6ba09e9bb69936a87f00fd4a43179f199e2826a9aaec31ff2f3795466f01c9"
+  },
+  "pi_launch_directory": "~/.pi/agent"
+}

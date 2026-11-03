@@ -1,0 +1,598 @@
+[
+  {
+    "name": "meeting",
+    "state": {
+      "sender": {
+        "name": "alex",
+        "address": "alex@example.com"
+      },
+      "recipients": "user@example.com",
+      "subject": "Project meeting tomorrow",
+      "summary": "Please confirm our project meeting at 10am tomorrow. We need your approval before the deadline.",
+      "headers": "Authentication-Results: spf=pass; dkim=pass; dmarc=pass"
+    },
+    "questions": {
+      "spam": {
+        "type": "noul",
+        "instructions": "Is this email spam: unsolicited bulk marketing, a scam, or mail the recipient never asked for? Receipts, subscribed newsletters, account notices and real correspondence are not spam. Use `headers` as evidence: authentication results, the Received chain, and List-* headers.",
+        "criteria": {
+          "true": "Unsolicited bulk, scam, or unwanted marketing mail.",
+          "false": "Mail the recipient plausibly wants: correspondence, receipts, notices, or subscribed content."
+        }
+      },
+      "phishing": {
+        "type": "noul",
+        "instructions": "Is this email a phishing attempt: does `sender` impersonate a trusted party to obtain credentials, payment, or personal data (look-alike domain, urgent account threat, login or payment request)? In `headers`, failing SPF/DKIM/DMARC, a Return-Path or Received chain from an unrelated domain, or a Reply-To elsewhere are strong evidence.",
+        "criteria": {
+          "true": "Impersonates a trusted party to extract credentials, money, or personal data.",
+          "false": "A genuine message from who `sender` claims to be, or ordinary mail with no such lure."
+        }
+      },
+      "priority": {
+        "type": "noul",
+        "instructions": "Does this email need the recipient's personal attention or a timely response: a real person writing to them, a security or account alert, a deadline, or a time-sensitive request?",
+        "criteria": {
+          "true": "Needs the recipient's personal attention or a timely response.",
+          "false": "Routine automated, promotional, or informational mail that can wait."
+        }
+      }
+    },
+    "expected": {
+      "spam": false,
+      "phishing": false,
+      "priority": true
+    },
+    "thresholds": {
+      "spam": 0.85,
+      "phishing": 0.85,
+      "priority": 0.7
+    }
+  },
+  {
+    "name": "receipt",
+    "state": {
+      "sender": {
+        "name": "receipts",
+        "address": "receipts@shop.example"
+      },
+      "recipients": "user@example.com",
+      "subject": "Receipt for your order",
+      "summary": "Thank you for your purchase. Your paid order will arrive Friday. No action is needed.",
+      "headers": "Authentication-Results: spf=pass; dkim=pass; dmarc=pass"
+    },
+    "questions": {
+      "spam": {
+        "type": "noul",
+        "instructions": "Is this email spam: unsolicited bulk marketing, a scam, or mail the recipient never asked for? Receipts, subscribed newsletters, account notices and real correspondence are not spam. Use `headers` as evidence: authentication results, the Received chain, and List-* headers.",
+        "criteria": {
+          "true": "Unsolicited bulk, scam, or unwanted marketing mail.",
+          "false": "Mail the recipient plausibly wants: correspondence, receipts, notices, or subscribed content."
+        }
+      },
+      "phishing": {
+        "type": "noul",
+        "instructions": "Is this email a phishing attempt: does `sender` impersonate a trusted party to obtain credentials, payment, or personal data (look-alike domain, urgent account threat, login or payment request)? In `headers`, failing SPF/DKIM/DMARC, a Return-Path or Received chain from an unrelated domain, or a Reply-To elsewhere are strong evidence.",
+        "criteria": {
+          "true": "Impersonates a trusted party to extract credentials, money, or personal data.",
+          "false": "A genuine message from who `sender` claims to be, or ordinary mail with no such lure."
+        }
+      },
+      "priority": {
+        "type": "noul",
+        "instructions": "Does this email need the recipient's personal attention or a timely response: a real person writing to them, a security or account alert, a deadline, or a time-sensitive request?",
+        "criteria": {
+          "true": "Needs the recipient's personal attention or a timely response.",
+          "false": "Routine automated, promotional, or informational mail that can wait."
+        }
+      }
+    },
+    "expected": {
+      "spam": false,
+      "phishing": false,
+      "priority": false
+    },
+    "thresholds": {
+      "spam": 0.85,
+      "phishing": 0.85,
+      "priority": 0.7
+    }
+  },
+  {
+    "name": "subscribed-newsletter",
+    "state": {
+      "sender": {
+        "name": "news",
+        "address": "news@science.example"
+      },
+      "recipients": "user@example.com",
+      "subject": "Your subscribed weekly science digest",
+      "summary": "Here is the weekly newsletter you subscribed to. New telescope images and astronomy news. No response required.",
+      "headers": "List-ID: Science Weekly <weekly.science.example>\nList-Unsubscribe: <https://science.example/unsubscribe>\nAuthentication-Results: spf=pass; dkim=pass; dmarc=pass"
+    },
+    "questions": {
+      "spam": {
+        "type": "noul",
+        "instructions": "Is this email spam: unsolicited bulk marketing, a scam, or mail the recipient never asked for? Receipts, subscribed newsletters, account notices and real correspondence are not spam. Use `headers` as evidence: authentication results, the Received chain, and List-* headers.",
+        "criteria": {
+          "true": "Unsolicited bulk, scam, or unwanted marketing mail.",
+          "false": "Mail the recipient plausibly wants: correspondence, receipts, notices, or subscribed content."
+        }
+      },
+      "phishing": {
+        "type": "noul",
+        "instructions": "Is this email a phishing attempt: does `sender` impersonate a trusted party to obtain credentials, payment, or personal data (look-alike domain, urgent account threat, login or payment request)? In `headers`, failing SPF/DKIM/DMARC, a Return-Path or Received chain from an unrelated domain, or a Reply-To elsewhere are strong evidence.",
+        "criteria": {
+          "true": "Impersonates a trusted party to extract credentials, money, or personal data.",
+          "false": "A genuine message from who `sender` claims to be, or ordinary mail with no such lure."
+        }
+      },
+      "priority": {
+        "type": "noul",
+        "instructions": "Does this email need the recipient's personal attention or a timely response: a real person writing to them, a security or account alert, a deadline, or a time-sensitive request?",
+        "criteria": {
+          "true": "Needs the recipient's personal attention or a timely response.",
+          "false": "Routine automated, promotional, or informational mail that can wait."
+        }
+      }
+    },
+    "expected": {
+      "spam": false,
+      "phishing": false,
+      "priority": false
+    },
+    "thresholds": {
+      "spam": 0.85,
+      "phishing": 0.85,
+      "priority": 0.7
+    }
+  },
+  {
+    "name": "unsolicited-marketing",
+    "state": {
+      "sender": {
+        "name": "sales",
+        "address": "sales@unknown.example"
+      },
+      "recipients": "user@example.com",
+      "subject": "Buy our email lists",
+      "summary": "Unsolicited offer: buy ten million email addresses for only $99. We scraped your address; you did not subscribe.",
+      "headers": "Precedence: bulk"
+    },
+    "questions": {
+      "spam": {
+        "type": "noul",
+        "instructions": "Is this email spam: unsolicited bulk marketing, a scam, or mail the recipient never asked for? Receipts, subscribed newsletters, account notices and real correspondence are not spam. Use `headers` as evidence: authentication results, the Received chain, and List-* headers.",
+        "criteria": {
+          "true": "Unsolicited bulk, scam, or unwanted marketing mail.",
+          "false": "Mail the recipient plausibly wants: correspondence, receipts, notices, or subscribed content."
+        }
+      },
+      "phishing": {
+        "type": "noul",
+        "instructions": "Is this email a phishing attempt: does `sender` impersonate a trusted party to obtain credentials, payment, or personal data (look-alike domain, urgent account threat, login or payment request)? In `headers`, failing SPF/DKIM/DMARC, a Return-Path or Received chain from an unrelated domain, or a Reply-To elsewhere are strong evidence.",
+        "criteria": {
+          "true": "Impersonates a trusted party to extract credentials, money, or personal data.",
+          "false": "A genuine message from who `sender` claims to be, or ordinary mail with no such lure."
+        }
+      },
+      "priority": {
+        "type": "noul",
+        "instructions": "Does this email need the recipient's personal attention or a timely response: a real person writing to them, a security or account alert, a deadline, or a time-sensitive request?",
+        "criteria": {
+          "true": "Needs the recipient's personal attention or a timely response.",
+          "false": "Routine automated, promotional, or informational mail that can wait."
+        }
+      }
+    },
+    "expected": {
+      "spam": true,
+      "phishing": false,
+      "priority": false
+    },
+    "thresholds": {
+      "spam": 0.85,
+      "phishing": 0.85,
+      "priority": 0.7
+    }
+  },
+  {
+    "name": "credential-phishing",
+    "state": {
+      "sender": {
+        "name": "security",
+        "address": "security@paypa1-verify.example"
+      },
+      "recipients": "user@example.com",
+      "subject": "Your PayPal account will be closed",
+      "summary": "Your account closes in one hour. Enter your password and two-factor code at https://paypa1-verify.example/login to avoid closure.",
+      "headers": "Authentication-Results: spf=fail; dkim=fail; dmarc=fail\nReply-To: harvest@unrelated.example"
+    },
+    "questions": {
+      "spam": {
+        "type": "noul",
+        "instructions": "Is this email spam: unsolicited bulk marketing, a scam, or mail the recipient never asked for? Receipts, subscribed newsletters, account notices and real correspondence are not spam. Use `headers` as evidence: authentication results, the Received chain, and List-* headers.",
+        "criteria": {
+          "true": "Unsolicited bulk, scam, or unwanted marketing mail.",
+          "false": "Mail the recipient plausibly wants: correspondence, receipts, notices, or subscribed content."
+        }
+      },
+      "phishing": {
+        "type": "noul",
+        "instructions": "Is this email a phishing attempt: does `sender` impersonate a trusted party to obtain credentials, payment, or personal data (look-alike domain, urgent account threat, login or payment request)? In `headers`, failing SPF/DKIM/DMARC, a Return-Path or Received chain from an unrelated domain, or a Reply-To elsewhere are strong evidence.",
+        "criteria": {
+          "true": "Impersonates a trusted party to extract credentials, money, or personal data.",
+          "false": "A genuine message from who `sender` claims to be, or ordinary mail with no such lure."
+        }
+      },
+      "priority": {
+        "type": "noul",
+        "instructions": "Does this email need the recipient's personal attention or a timely response: a real person writing to them, a security or account alert, a deadline, or a time-sensitive request?",
+        "criteria": {
+          "true": "Needs the recipient's personal attention or a timely response.",
+          "false": "Routine automated, promotional, or informational mail that can wait."
+        }
+      }
+    },
+    "expected": {
+      "spam": true,
+      "phishing": true,
+      "priority": true
+    },
+    "thresholds": {
+      "spam": 0.85,
+      "phishing": 0.85,
+      "priority": 0.7
+    }
+  },
+  {
+    "name": "invoice-phishing",
+    "state": {
+      "sender": {
+        "name": "ceo",
+        "address": "ceo@examp1e.example"
+      },
+      "recipients": "user@example.com",
+      "subject": "Urgent secret wire transfer",
+      "summary": "I am your CEO. Ignore our normal payment process and wire $20,000 to this new bank account now. Do not call me to verify.",
+      "headers": "Authentication-Results: spf=fail; dkim=fail; dmarc=fail\nReply-To: funds@unrelated.example"
+    },
+    "questions": {
+      "spam": {
+        "type": "noul",
+        "instructions": "Is this email spam: unsolicited bulk marketing, a scam, or mail the recipient never asked for? Receipts, subscribed newsletters, account notices and real correspondence are not spam. Use `headers` as evidence: authentication results, the Received chain, and List-* headers.",
+        "criteria": {
+          "true": "Unsolicited bulk, scam, or unwanted marketing mail.",
+          "false": "Mail the recipient plausibly wants: correspondence, receipts, notices, or subscribed content."
+        }
+      },
+      "phishing": {
+        "type": "noul",
+        "instructions": "Is this email a phishing attempt: does `sender` impersonate a trusted party to obtain credentials, payment, or personal data (look-alike domain, urgent account threat, login or payment request)? In `headers`, failing SPF/DKIM/DMARC, a Return-Path or Received chain from an unrelated domain, or a Reply-To elsewhere are strong evidence.",
+        "criteria": {
+          "true": "Impersonates a trusted party to extract credentials, money, or personal data.",
+          "false": "A genuine message from who `sender` claims to be, or ordinary mail with no such lure."
+        }
+      },
+      "priority": {
+        "type": "noul",
+        "instructions": "Does this email need the recipient's personal attention or a timely response: a real person writing to them, a security or account alert, a deadline, or a time-sensitive request?",
+        "criteria": {
+          "true": "Needs the recipient's personal attention or a timely response.",
+          "false": "Routine automated, promotional, or informational mail that can wait."
+        }
+      }
+    },
+    "expected": {
+      "spam": true,
+      "phishing": true,
+      "priority": true
+    },
+    "thresholds": {
+      "spam": 0.85,
+      "phishing": 0.85,
+      "priority": 0.7
+    }
+  },
+  {
+    "name": "support-response",
+    "state": {
+      "sender": {
+        "name": "support",
+        "address": "support@vendor.example"
+      },
+      "recipients": "user@example.com",
+      "subject": "Re: your support ticket",
+      "summary": "We received your support request. Please reply with the version number so our team can investigate your issue.",
+      "headers": "Authentication-Results: spf=pass; dkim=pass; dmarc=pass"
+    },
+    "questions": {
+      "spam": {
+        "type": "noul",
+        "instructions": "Is this email spam: unsolicited bulk marketing, a scam, or mail the recipient never asked for? Receipts, subscribed newsletters, account notices and real correspondence are not spam. Use `headers` as evidence: authentication results, the Received chain, and List-* headers.",
+        "criteria": {
+          "true": "Unsolicited bulk, scam, or unwanted marketing mail.",
+          "false": "Mail the recipient plausibly wants: correspondence, receipts, notices, or subscribed content."
+        }
+      },
+      "phishing": {
+        "type": "noul",
+        "instructions": "Is this email a phishing attempt: does `sender` impersonate a trusted party to obtain credentials, payment, or personal data (look-alike domain, urgent account threat, login or payment request)? In `headers`, failing SPF/DKIM/DMARC, a Return-Path or Received chain from an unrelated domain, or a Reply-To elsewhere are strong evidence.",
+        "criteria": {
+          "true": "Impersonates a trusted party to extract credentials, money, or personal data.",
+          "false": "A genuine message from who `sender` claims to be, or ordinary mail with no such lure."
+        }
+      },
+      "priority": {
+        "type": "noul",
+        "instructions": "Does this email need the recipient's personal attention or a timely response: a real person writing to them, a security or account alert, a deadline, or a time-sensitive request?",
+        "criteria": {
+          "true": "Needs the recipient's personal attention or a timely response.",
+          "false": "Routine automated, promotional, or informational mail that can wait."
+        }
+      }
+    },
+    "expected": {
+      "spam": false,
+      "phishing": false,
+      "priority": true
+    },
+    "thresholds": {
+      "spam": 0.85,
+      "phishing": 0.85,
+      "priority": 0.7
+    }
+  },
+  {
+    "name": "long-project-update",
+    "state": {
+      "sender": {
+        "name": "alex",
+        "address": "alex@example.com"
+      },
+      "recipients": "user@example.com",
+      "subject": "Approval required by tomorrow",
+      "summary": "Please review and approve the release by tomorrow. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Project status: the documentation is complete and the test results are attached. Please reply with approval before 10am tomorrow.",
+      "headers": "Authentication-Results: spf=pass; dkim=pass; dmarc=pass"
+    },
+    "questions": {
+      "spam": {
+        "type": "noul",
+        "instructions": "Is this email spam: unsolicited bulk marketing, a scam, or mail the recipient never asked for? Receipts, subscribed newsletters, account notices and real correspondence are not spam. Use `headers` as evidence: authentication results, the Received chain, and List-* headers.",
+        "criteria": {
+          "true": "Unsolicited bulk, scam, or unwanted marketing mail.",
+          "false": "Mail the recipient plausibly wants: correspondence, receipts, notices, or subscribed content."
+        }
+      },
+      "phishing": {
+        "type": "noul",
+        "instructions": "Is this email a phishing attempt: does `sender` impersonate a trusted party to obtain credentials, payment, or personal data (look-alike domain, urgent account threat, login or payment request)? In `headers`, failing SPF/DKIM/DMARC, a Return-Path or Received chain from an unrelated domain, or a Reply-To elsewhere are strong evidence.",
+        "criteria": {
+          "true": "Impersonates a trusted party to extract credentials, money, or personal data.",
+          "false": "A genuine message from who `sender` claims to be, or ordinary mail with no such lure."
+        }
+      },
+      "priority": {
+        "type": "noul",
+        "instructions": "Does this email need the recipient's personal attention or a timely response: a real person writing to them, a security or account alert, a deadline, or a time-sensitive request?",
+        "criteria": {
+          "true": "Needs the recipient's personal attention or a timely response.",
+          "false": "Routine automated, promotional, or informational mail that can wait."
+        }
+      }
+    },
+    "expected": {
+      "spam": false,
+      "phishing": false,
+      "priority": true
+    },
+    "thresholds": {
+      "spam": 0.85,
+      "phishing": 0.85,
+      "priority": 0.7
+    }
+  },
+  {
+    "name": "no-reply",
+    "state": {
+      "reply_address": "no-reply@shop.example",
+      "sender": {
+        "name": "Sender",
+        "address": "no-reply@shop.example"
+      },
+      "subject": "Message",
+      "summary": "This mailbox is not monitored. Replies will not be read.",
+      "headers": ""
+    },
+    "questions": {
+      "no_reply": {
+        "type": "noul",
+        "instructions": "Would a reply sent to `reply_address` go unread because it is an automated, unmonitored mailbox (a no-reply, do-not-reply, or mailer-daemon address, or the email says replies are not monitored)? Support desks, shared team inboxes, and per-message reply addresses do accept replies. Auto-Submitted, Precedence and List-* in `headers` show automation, not by themselves an unread inbox.",
+        "criteria": {
+          "true": "Nobody reads replies sent to `reply_address`.",
+          "false": "A person or team could read a reply sent to `reply_address`."
+        }
+      }
+    },
+    "expected": {
+      "no_reply": true
+    },
+    "thresholds": {
+      "no_reply": 0.95
+    },
+    "negative_thresholds": {
+      "no_reply": 0.05
+    },
+    "fallback": {
+      "no_reply": true
+    }
+  },
+  {
+    "name": "human",
+    "state": {
+      "reply_address": "alex@example.com",
+      "sender": {
+        "name": "Sender",
+        "address": "alex@example.com"
+      },
+      "subject": "Message",
+      "summary": "Please reply with your feedback.",
+      "headers": ""
+    },
+    "questions": {
+      "no_reply": {
+        "type": "noul",
+        "instructions": "Would a reply sent to `reply_address` go unread because it is an automated, unmonitored mailbox (a no-reply, do-not-reply, or mailer-daemon address, or the email says replies are not monitored)? Support desks, shared team inboxes, and per-message reply addresses do accept replies. Auto-Submitted, Precedence and List-* in `headers` show automation, not by themselves an unread inbox.",
+        "criteria": {
+          "true": "Nobody reads replies sent to `reply_address`.",
+          "false": "A person or team could read a reply sent to `reply_address`."
+        }
+      }
+    },
+    "expected": {
+      "no_reply": false
+    },
+    "thresholds": {
+      "no_reply": 0.95
+    },
+    "negative_thresholds": {
+      "no_reply": 0.05
+    },
+    "fallback": {
+      "no_reply": false
+    }
+  },
+  {
+    "name": "support-inbox",
+    "state": {
+      "reply_address": "support@vendor.example",
+      "sender": {
+        "name": "Sender",
+        "address": "support@vendor.example"
+      },
+      "subject": "Message",
+      "summary": "Reply here; our support team reads replies.",
+      "headers": ""
+    },
+    "questions": {
+      "no_reply": {
+        "type": "noul",
+        "instructions": "Would a reply sent to `reply_address` go unread because it is an automated, unmonitored mailbox (a no-reply, do-not-reply, or mailer-daemon address, or the email says replies are not monitored)? Support desks, shared team inboxes, and per-message reply addresses do accept replies. Auto-Submitted, Precedence and List-* in `headers` show automation, not by themselves an unread inbox.",
+        "criteria": {
+          "true": "Nobody reads replies sent to `reply_address`.",
+          "false": "A person or team could read a reply sent to `reply_address`."
+        }
+      }
+    },
+    "expected": {
+      "no_reply": false
+    },
+    "thresholds": {
+      "no_reply": 0.95
+    },
+    "negative_thresholds": {
+      "no_reply": 0.05
+    },
+    "fallback": {
+      "no_reply": false
+    }
+  },
+  {
+    "name": "automated-but-monitored",
+    "state": {
+      "reply_address": "ticket-123@vendor.example",
+      "sender": {
+        "name": "Sender",
+        "address": "ticket-123@vendor.example"
+      },
+      "subject": "Message",
+      "summary": "Automated acknowledgement. Reply to this address to reach your assigned support agent.",
+      "headers": "Auto-Submitted: auto-generated"
+    },
+    "questions": {
+      "no_reply": {
+        "type": "noul",
+        "instructions": "Would a reply sent to `reply_address` go unread because it is an automated, unmonitored mailbox (a no-reply, do-not-reply, or mailer-daemon address, or the email says replies are not monitored)? Support desks, shared team inboxes, and per-message reply addresses do accept replies. Auto-Submitted, Precedence and List-* in `headers` show automation, not by themselves an unread inbox.",
+        "criteria": {
+          "true": "Nobody reads replies sent to `reply_address`.",
+          "false": "A person or team could read a reply sent to `reply_address`."
+        }
+      }
+    },
+    "expected": {
+      "no_reply": false
+    },
+    "thresholds": {
+      "no_reply": 0.95
+    },
+    "negative_thresholds": {
+      "no_reply": 0.05
+    },
+    "fallback": {
+      "no_reply": false
+    }
+  },
+  {
+    "name": "related-reference",
+    "state": {
+      "email": {
+        "from": "alex@example.com",
+        "subject": "Project meeting tomorrow",
+        "summary": "Can you confirm our project meeting time?"
+      },
+      "candidate": {
+        "from": "alex@example.com",
+        "date": "2026-11-01",
+        "subject": "Re: Project meeting",
+        "snippet": "We agreed on 10am tomorrow for the project meeting."
+      }
+    },
+    "questions": {
+      "useful": {
+        "type": "noul",
+        "instructions": "Does `candidate` give useful context for writing a reply to `email` (same thread, related request, or a prior commitment)?",
+        "criteria": {
+          "true": "Useful context for the reply.",
+          "false": "Unrelated to the reply."
+        }
+      }
+    },
+    "expected": {
+      "useful": true
+    },
+    "thresholds": {
+      "useful": 0.6
+    }
+  },
+  {
+    "name": "unrelated-reference",
+    "state": {
+      "email": {
+        "from": "alex@example.com",
+        "subject": "Project meeting tomorrow",
+        "summary": "Can you confirm our project meeting time?"
+      },
+      "candidate": {
+        "from": "alex@example.com",
+        "date": "2026-11-01",
+        "subject": "Astronomy news",
+        "snippet": "A new telescope discovered a distant star."
+      }
+    },
+    "questions": {
+      "useful": {
+        "type": "noul",
+        "instructions": "Does `candidate` give useful context for writing a reply to `email` (same thread, related request, or a prior commitment)?",
+        "criteria": {
+          "true": "Useful context for the reply.",
+          "false": "Unrelated to the reply."
+        }
+      }
+    },
+    "expected": {
+      "useful": false
+    },
+    "thresholds": {
+      "useful": 0.6
+    }
+  }
+]

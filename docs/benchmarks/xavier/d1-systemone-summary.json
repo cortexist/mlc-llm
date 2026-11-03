@@ -1,0 +1,122 @@
+{
+  "date": "2026-11-02",
+  "device": "Jetson AGX Xavier 32 GB",
+  "environment": {
+    "jetpack": "5.1.8",
+    "cuda": "11.4",
+    "arch": "sm_72"
+  },
+  "precision": "q0f16",
+  "capacity": 2048,
+  "library": "d1-text-f16-s2048-sm72.so",
+  "library_sha256": "3da4091668cb4bc119842208fad7ddb0a1d49b64e2fd4d68140713259b46ffb9",
+  "cases_sha256": "644adf3c6bc0204ba18adc273f42d41885a0f56efac44cdfb2e9d9cc8ebf6f46",
+  "reference": {
+    "tokens": [
+      428,
+      1340
+    ],
+    "minimum_hidden_cosine": 0.9999912841615448,
+    "maximum_probability_drift": 0.0021448585561030797,
+    "gpu_results": [
+      {
+        "tokens": 428,
+        "precision": "f16",
+        "hidden_cosine": 0.9999982517339038,
+        "max_abs_hidden": 0.09637832641601562,
+        "answers": {
+          "spam": {
+            "type": "noul",
+            "noul": 0.06410125989229855
+          },
+          "phishing": {
+            "type": "noul",
+            "noul": 0.0703995605334113
+          },
+          "priority": {
+            "type": "noul",
+            "noul": 0.968997609532532
+          }
+        },
+        "warm_timings": [
+          {
+            "inference_ms": 2458.6781859998155,
+            "total_ms": 2468.9614999988407
+          }
+        ]
+      },
+      {
+        "tokens": 1340,
+        "precision": "f16",
+        "hidden_cosine": 0.9999912841615448,
+        "max_abs_hidden": 0.5746068954467773,
+        "answers": {
+          "spam": {
+            "type": "noul",
+            "noul": 0.2985931416785425
+          },
+          "phishing": {
+            "type": "noul",
+            "noul": 0.14240293480232374
+          },
+          "priority": {
+            "type": "noul",
+            "noul": 0.9700884779146576
+          }
+        },
+        "warm_timings": [
+          {
+            "inference_ms": 2469.926101000965,
+            "total_ms": 2484.4897180009866
+          }
+        ]
+      }
+    ]
+  },
+  "http": {
+    "cases": 14,
+    "all_labels_correct": 13,
+    "labels": 30,
+    "labels_correct": 28,
+    "http_median_ms": 2595.4961725510657,
+    "forward_median_ms": 2484.6004655009892,
+    "min_input_tokens": 160,
+    "max_input_tokens": 1336,
+    "protocol_checks": "passed",
+    "limitation": "Authored synthetic development cases, not held-out calibration"
+  },
+  "checks": {
+    "input_tests": 6,
+    "queue_budget_tests": 6,
+    "actual_agentic_mail_rust_client": "passed with OS TLS trust",
+    "nemotron_draft": "passed",
+    "embedding_dimensions": 768,
+    "oversize": "HTTP 400, no truncation",
+    "unsupported_media": "HTTP 422",
+    "invalid_criteria": "HTTP 400",
+    "unknown_model": "HTTP 404",
+    "unauthenticated": "HTTP 401",
+    "endpoint_alias": "identical response for repeated request",
+    "single_choice": "choice, confidence and probabilities verified"
+  },
+  "memory_snapshot": {
+    "available_mib": 14563,
+    "used_mib": 16043,
+    "swap_used_mib": 6,
+    "resident_models": [
+      "nemotron",
+      "embeddinggemma-2",
+      "d1-omni-2b"
+    ],
+    "peak_qualified": false
+  },
+  "limitations": [
+    "Authored synthetic development fixtures; no real mail read, classified or sent.",
+    "One unsolicited-marketing case correctly classified as spam but incorrectly as phishing and priority.",
+    "No threshold tuning. Replyability uses existing address-pattern fallback for uncertain probabilities.",
+    "Fixed padded 2048-token execution, including short inputs; 256-token artifacts retained.",
+    "All three models share a FIFO; queue wait adds to latency.",
+    "No full-capacity sustained stability, power or broad calibration qualification.",
+    "Only noul and single choice; not full JEV feature parity."
+  ]
+}

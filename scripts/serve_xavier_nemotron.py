@@ -1,5 +1,6 @@
 """Serve the validated Xavier Nemotron/DFlash configuration on loopback."""
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import mlc_llm
 from mlc_llm.base import _LIB_PATH
 from mlc_llm.protocol import error_protocol
 from mlc_llm.protocol.openai_api_protocol import (
+    ChatCompletionMessage,
     ChatCompletionRequest,
     CompletionRequest,
     EmbeddingRequest,
@@ -92,18 +94,13 @@ if os.environ.get("MLC_GEMMA4_MTP") == "1":
     # allocations. Xavier NvMap can reject a large late startup allocation.
     mtp = MTPChat(root)
 embedding = None
-if os.environ.get("MLC_EMBEDDINGGEMMA2") == "1":
-    from embeddinggemma2_service import ResidentEmbedding
-
-    embedding = ResidentEmbedding(root)
+decision = None
 engine = AsyncMLCEngine(
     str(root / "dist/target-16k"),
     device="cuda",
     model_lib=str(
         root
-        / os.environ.get(
-            "MLC_NEMOTRON_MODEL_LIB", "dist/libs/target-dflash-dp4a-attn-16k-sm72.so"
-        )
+        / os.environ.get("MLC_NEMOTRON_MODEL_LIB", "dist/libs/target-dflash-dp4a-attn-16k-sm72.so")
     ),
     mode="interactive",
     engine_config=EngineConfig(
@@ -111,10 +108,11 @@ engine = AsyncMLCEngine(
             (str(root / "dist/draft-16k"), str(root / "dist/libs/draft-cached-tc-16k-sm72.so"))
         ],
         max_num_sequence=1,
-        max_total_sequence_length=16384,
+        max_total_sequence_length=int(os.environ.get("MLC_NEMOTRON_KV_BUDGET", "16384")),
         max_single_sequence_length=16384,
         prefill_chunk_size=512,
-        prefix_cache_mode="disable",
+        prefix_cache_mode=os.environ.get("MLC_NEMOTRON_PREFIX_CACHE", "disable"),
+        prefix_cache_max_num_recycling_seqs=int(os.environ.get("MLC_NEMOTRON_PREFIX_SLOTS", "1")),
         speculative_mode="dflash",
         spec_draft_length=3,
     ),
@@ -127,6 +125,15 @@ tool_adapter = Gemma4ToolAdapter(
         "MLC_NEMOTRON_TOKENIZER", str(Path.home() / "Models/nemotron-3.5-Bolt-E4B-BF16")
     ),
 )
+server_prompt = None
+if os.environ.get("MLC_NEMOTRON_SERVER_PROMPT") == "1":
+    if os.environ.get("MLC_NEMOTRON_PREFIX_CACHE") != "radix":
+        raise RuntimeError("A protected service prefix requires radix caching")
+    if os.environ.get("MLC_XAVIER_LINEAR_FORK") != "1":
+        raise RuntimeError("A protected service prefix requires safe linear KV copying")
+    from xavier_service_prompt import VERSION, prefix_tokens, prepend_policy
+
+    server_prompt = prefix_tokens(tool_adapter.tokenizer)
 queue = GenerationQueue()
 with ServerContext() as context:
     context.add_model("nemotron", engine)
@@ -134,6 +141,39 @@ with ServerContext() as context:
     app = fastapi.FastAPI(title="Xavier Nemotron API", docs_url=None, redoc_url=None)
     app.add_middleware(GreedyOnlyMiddleware)
     app.add_middleware(SharedGenerationQueue, queue=queue, api_key=key)
+
+    @app.on_event("startup")
+    async def warm_and_load_specialists():
+        # Reserve the maximum prefill workspace before specialist allocations.
+        # Late 1 GiB NvMap allocations can fail despite ample total free RAM.
+        # Use the serving event loop: MLC retains its first async loop reference.
+        global embedding, decision
+        await asyncio.wait_for(
+            engine.completions.create(
+                prompt=[100] * 512, model="nemotron", max_tokens=4, temperature=0
+            ),
+            timeout=90,
+        )
+        if server_prompt is not None:
+            await engine.completions.create(
+                prompt=server_prompt,
+                model="nemotron",
+                max_tokens=1,
+                temperature=0,
+                extra_body={"debug_config": {"pinned_system_prompt": True}},
+            )
+            print(
+                f"Protected service prefix: {len(server_prompt)} tokens, policy {VERSION}",
+                flush=True,
+            )
+        if os.environ.get("MLC_EMBEDDINGGEMMA2") == "1":
+            from embeddinggemma2_service import ResidentEmbedding
+
+            embedding = await asyncio.to_thread(ResidentEmbedding, root)
+        if os.environ.get("MLC_D1") == "1":
+            from d1_service import ResidentDecision
+
+            decision = await asyncio.to_thread(ResidentDecision, root)
 
     @app.post(
         "/v1/chat/completions", dependencies=[fastapi.Depends(openai_entrypoints.verify_api_key)]
@@ -145,12 +185,28 @@ with ServerContext() as context:
         if request.model not in (None, "nemotron", "nemotron:e4b"):
             raise fastapi.HTTPException(404, "Unknown model; see /v1/models")
         queue.active_model = "nemotron"
+        if server_prompt is not None:
+            try:
+                messages = prepend_policy(
+                    [m.model_dump(exclude_none=True) for m in request.messages]
+                )
+                request = request.model_copy(
+                    update={"messages": [ChatCompletionMessage.model_validate(m) for m in messages]}
+                )
+            except ValueError as exc:
+                raise fastapi.HTTPException(400, str(exc)) from exc
         if request.tools or any(m.tool_calls or m.role == "tool" for m in request.messages):
             return await tool_adapter.handle(request, raw_request)
+        if request.response_format is not None and request.response_format.type == "json_object":
+            from xavier_json_response import json_chat
+
+            return await json_chat(request, raw_request, openai_entrypoints.request_chat_completion)
         return await openai_entrypoints.request_chat_completion(request, raw_request)
 
     @app.post("/v1/completions", dependencies=[fastapi.Depends(openai_entrypoints.verify_api_key)])
     async def complete(request: CompletionRequest, raw_request: fastapi.Request):
+        if request.response_format is not None and request.response_format.type == "json_object":
+            raise fastapi.HTTPException(400, "Use buffered /v1/chat/completions for JSON objects")
         if mtp is not None and request.model == mtp.model_id:
             raise fastapi.HTTPException(400, "gemma4-12b supports /v1/chat/completions only")
         if request.model not in (None, "nemotron", "nemotron:e4b"):
@@ -165,9 +221,29 @@ with ServerContext() as context:
         queue.active_model = embedding.model_id
         return await embedding.handle(request)
 
+    from d1_service import DecisionRequest
+
+    @app.post("/v1/decisions", dependencies=[fastapi.Depends(openai_entrypoints.verify_api_key)])
+    @app.post("/v1/systemone", dependencies=[fastapi.Depends(openai_entrypoints.verify_api_key)])
+    async def decide(request: DecisionRequest):
+        if decision is None or request.model != decision.model_id:
+            raise fastapi.HTTPException(404, "Decision model unavailable; see /v1/models")
+        queue.active_model = decision.model_id
+        return await decision.handle(request)
+
     @app.get("/v1/models", dependencies=[fastapi.Depends(openai_entrypoints.verify_api_key)])
     async def models():
         entries = [dict(id="nemotron", object="model", owned_by="xavier", context_length=16384)]
+        if decision is not None:
+            entries.append(
+                dict(
+                    id=decision.model_id,
+                    object="model",
+                    owned_by="xavier",
+                    context_length=decision.context_length,
+                    task="decision",
+                )
+            )
         if mtp is not None:
             entries.append(
                 dict(
@@ -200,8 +276,11 @@ with ServerContext() as context:
             "model": "nemotron",
             "models": ["nemotron"]
             + ([mtp.model_id] if mtp is not None else [])
-            + ([embedding.model_id] if embedding is not None else []),
+            + ([embedding.model_id] if embedding is not None else [])
+            + ([decision.model_id] if decision is not None else []),
             "queue": queue.status(),
+            "service_prefix_tokens": len(server_prompt) if server_prompt else 0,
+            "service_policy": VERSION if server_prompt is not None else None,
         }
 
     try:
@@ -211,3 +290,5 @@ with ServerContext() as context:
             mtp.pool.shutdown(wait=True)
         if embedding is not None:
             embedding.pool.shutdown(wait=True)
+        if decision is not None:
+            decision.pool.shutdown(wait=True)

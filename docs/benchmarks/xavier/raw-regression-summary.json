@@ -1,0 +1,278 @@
+{
+  "date": "2026-11-02",
+  "model": "NVIDIA Nemotron 3.5 Bolt E4B",
+  "device": "Jetson AGX Xavier 32 GB, JetPack 5.1.8, CUDA 11.4, sm_72",
+  "protocol": {
+    "order": [
+      "old runtime",
+      "current runtime",
+      "old runtime repeat"
+    ],
+    "prompt_tokens": [
+      161,
+      910
+    ],
+    "forced_output_tokens": 64,
+    "warmups_per_case_per_mode": 1,
+    "measured_repeats_per_case_per_phase": 2,
+    "prefix_cache": "disabled",
+    "system_prompt_injection": false,
+    "prefill_chunk_tokens": 512,
+    "single_request_context": 16384,
+    "old_aggregate_kv_budget": 16384,
+    "current_aggregate_kv_budget": 32768,
+    "concurrent_sequences": 1,
+    "draft_proposals": 2,
+    "clocks_mhz": {
+      "gpu": 1377,
+      "cpu": 2265.6,
+      "emc": 2133
+    },
+    "models": "Same target/draft weights and compiled model libraries in all phases",
+    "baseline": "Archived MLC runtime from before DFlash prefix changes and TVM runtime from before linear prefix copying",
+    "other_resident_workers": "Stopped during all standalone phases; restored afterward",
+    "runner": "bench_xavier_current.py with max_total_sequence_length read from BENCH_KV_BUDGET; per-request context held at 16384"
+  },
+  "rows": [
+    {
+      "mode": "plain",
+      "prompt_tokens": 161,
+      "output_text_identical": true,
+      "prefill_tok_s": {
+        "old_first": 331.779549338321,
+        "current": 332.1178529083127,
+        "old_repeat": 332.56957525862737,
+        "old_control_average": 332.17456229847414,
+        "current_change_percent": -0.017072165240172854,
+        "old_control_drift_percent": 0.2381177266296053,
+        "samples": {
+          "before": [
+            329.60397963108,
+            333.955119045562
+          ],
+          "after": [
+            332.6502309187653,
+            331.58547489786014
+          ],
+          "before2": [
+            331.55669877586666,
+            333.58245174138807
+          ]
+        }
+      },
+      "decode_tok_s": {
+        "old_first": 23.327671590199405,
+        "current": 23.32173893730824,
+        "old_repeat": 23.332898006353382,
+        "old_control_average": 23.330284798276395,
+        "current_change_percent": -0.036629904186968876,
+        "old_control_drift_percent": 0.0224043627061965,
+        "samples": {
+          "before": [
+            23.063647312049582,
+            23.591695868349227
+          ],
+          "after": [
+            23.467029388965916,
+            23.17644848565056
+          ],
+          "before2": [
+            23.345321908371428,
+            23.320474104335332
+          ]
+        }
+      }
+    },
+    {
+      "mode": "plain",
+      "prompt_tokens": 910,
+      "output_text_identical": true,
+      "prefill_tok_s": {
+        "old_first": 425.05140810322814,
+        "current": 423.1734872224843,
+        "old_repeat": 423.5211814402196,
+        "old_control_average": 424.2862947717239,
+        "current_change_percent": -0.2622775147234635,
+        "old_control_drift_percent": -0.36000978560148944,
+        "samples": {
+          "before": [
+            425.484366493381,
+            424.6184497130753
+          ],
+          "after": [
+            424.9469801941612,
+            421.3999942508074
+          ],
+          "before2": [
+            421.3024802755264,
+            425.73988260491274
+          ]
+        }
+      },
+      "decode_tok_s": {
+        "old_first": 18.217894449246618,
+        "current": 18.41105343604849,
+        "old_repeat": 18.2133969097887,
+        "old_control_average": 18.215645679517657,
+        "current_change_percent": 1.0727468022204478,
+        "old_control_drift_percent": -0.024687482246910086,
+        "samples": {
+          "before": [
+            18.27671956022801,
+            18.159069338265226
+          ],
+          "after": [
+            18.486603223889826,
+            18.335503648207155
+          ],
+          "before2": [
+            18.165417567333417,
+            18.26137625224398
+          ]
+        }
+      }
+    },
+    {
+      "mode": "DFlash",
+      "prompt_tokens": 161,
+      "output_text_identical": true,
+      "prefill_tok_s": {
+        "old_first": 329.6498574942577,
+        "current": 332.37831137302226,
+        "old_repeat": 327.93143086700354,
+        "old_control_average": 328.7906441806306,
+        "current_change_percent": 1.0911707057031261,
+        "old_control_drift_percent": -0.5212884483907443,
+        "samples": {
+          "before": [
+            329.2999078436822,
+            329.99980714483314
+          ],
+          "after": [
+            333.61547670792055,
+            331.141146038124
+          ],
+          "before2": [
+            327.9804118852979,
+            327.88244984870926
+          ]
+        }
+      },
+      "decode_tok_s": {
+        "old_first": 33.132252150065625,
+        "current": 33.35767965747059,
+        "old_repeat": 32.93341576424578,
+        "old_control_average": 33.0328339571557,
+        "current_change_percent": 0.9834024556785614,
+        "old_control_drift_percent": -0.600129399351601,
+        "samples": {
+          "before": [
+            32.9484693924783,
+            33.31603490765294
+          ],
+          "after": [
+            33.11381430694131,
+            33.601545007999874
+          ],
+          "before2": [
+            32.82281005492337,
+            33.044021473568186
+          ]
+        }
+      }
+    },
+    {
+      "mode": "DFlash",
+      "prompt_tokens": 910,
+      "output_text_identical": true,
+      "prefill_tok_s": {
+        "old_first": 415.6637605686759,
+        "current": 418.12067208409115,
+        "old_repeat": 419.9093126847886,
+        "old_control_average": 417.78653662673224,
+        "current_change_percent": 0.07997755505879667,
+        "old_control_drift_percent": 1.0213909700244939,
+        "samples": {
+          "before": [
+            416.82645892189856,
+            414.5010622154533
+          ],
+          "after": [
+            417.66685888659356,
+            418.57448528158875
+          ],
+          "before2": [
+            419.5257285519415,
+            420.2928968176356
+          ]
+        }
+      },
+      "decode_tok_s": {
+        "old_first": 32.80309570944719,
+        "current": 32.940558654897586,
+        "old_repeat": 33.07837049254688,
+        "old_control_average": 32.940733100997036,
+        "current_change_percent": -0.0005295756439815946,
+        "old_control_drift_percent": 0.8391731851710826,
+        "samples": {
+          "before": [
+            32.77004297870721,
+            32.83614844018717
+          ],
+          "after": [
+            33.08507228127513,
+            32.79604502852005
+          ],
+          "before2": [
+            32.91913080839088,
+            33.23761017670287
+          ]
+        }
+      }
+    }
+  ],
+  "all_outputs_identical_within_mode": true,
+  "limitations": [
+    "Short check with two measured requests per phase and case",
+    "Before/current use different aggregate KV budgets to include the deployed capacity change",
+    "Does not measure HTTP/Pi latency or cache-hit copying overhead",
+    "Cannot exclude regressions below short-run variation"
+  ],
+  "conclusion": "No detectable raw-throughput regression in this short check; largest negative paired change is 0.26%, within control variation.",
+  "artifact_sha256": [
+    {
+      "artifact": "current_mlc_runtime",
+      "sha256": "c86bb29a1f2535e83879ddcea17c3a2d8e5d807d4bb726072a66d2f9f1e038f7"
+    },
+    {
+      "artifact": "current_tvm_runtime",
+      "sha256": "405bab2faf81c625ec5a81b29d9f34cf49f4e485a7c500cfceb58b9fef7dc9df"
+    },
+    {
+      "artifact": "old_mlc_runtime",
+      "sha256": "143c254a96b682435067a598dd8fc10e7e0d933b67614fc4f851b2b7f837f8c6"
+    },
+    {
+      "artifact": "old_tvm_runtime",
+      "sha256": "912ad05712aaf76705420c6b51e872da851770937428268839fd534bb6d408e0"
+    },
+    {
+      "artifact": "target_model_library",
+      "sha256": "fa15d353459bd48da4d232e294951d22ab3bba7fb1b968df87dc38eef3965a14"
+    },
+    {
+      "artifact": "draft_model_library",
+      "sha256": "ca3a3d07a7e4cb2a30e8c78c490364332722d27d6c79652ba0fca490a80672db"
+    }
+  ],
+  "restored_service": {
+    "healthy": true,
+    "protected_prefix_tokens": 342,
+    "resident_models": [
+      "nemotron",
+      "embeddinggemma-2",
+      "d1-omni-2b"
+    ],
+    "arithmetic_answer": "391"
+  }
+}

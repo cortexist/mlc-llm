@@ -26,7 +26,13 @@ class SharedGenerationQueue:
             scope["type"] != "http"
             or scope.get("method") != "POST"
             or scope.get("path")
-            not in ("/v1/chat/completions", "/v1/completions", "/v1/embeddings")
+            not in (
+                "/v1/chat/completions",
+                "/v1/completions",
+                "/v1/embeddings",
+                "/v1/decisions",
+                "/v1/systemone",
+            )
         ):
             return await self.app(scope, receive, send)
         headers = dict(scope.get("headers", []))
@@ -52,8 +58,9 @@ class SharedGenerationQueue:
         async def respond(message):
             if message["type"] == "http.response.start":
                 message = dict(message)
-                message["headers"] = list(message.get("headers", [])) + [
-                    (b"x-xavier-queue-wait-ms", wait_ms)
+                message["headers"] = [
+                    *message.get("headers", []),
+                    (b"x-xavier-queue-wait-ms", wait_ms),
                 ]
             await send(message)
 

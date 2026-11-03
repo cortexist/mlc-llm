@@ -317,6 +317,22 @@ See the
 [deployment and client instructions](deploy/xavier/README.md) for CA trust,
 credentials, service management and certificate renewal.
 
+The optional [protected-prefix service profile](docs/deploy/xavier_service_prefix.md)
+adds DFlash prefix reuse, safe independent KV copies, corrected LRU eviction,
+and a pinned shared policy with two recent conversations. A short uncached
+old/current/old check found no detectable raw-throughput regression; see the
+[measurements and limits](docs/benchmarks/xavier/raw-regression-summary.json).
+
+The [d1 decision worker](docs/deploy/xavier_d1_decisions.md) adds bounded text
+yes/no and single-choice decisions from LiquidAI/d1-Omni-2B alongside resident
+Nemotron and EmbeddingGemma 2. Its LFM3 port includes set attention and gated
+convolutions. Initial 256-token FP16 forward time is 277 ms versus 995 ms
+in FP32. A separately compiled 2K variant and JEV-style `/v1/systemone`
+endpoint support structured mail decisions; audio and vision remain unsupported. The
+[Pi specialist extension](docs/deploy/xavier_pi_specialists.md) lets Nemotron
+call d1 decisions and EmbeddingGemma semantic ranking, with direct slash commands
+for both workers.
+
 The [runbook search/RAG trial](docs/deploy/xavier_runbook_rag.md) exercises
 EmbeddingGemma 2 retrieval followed by cited Nemotron answers over 251 public
 documentation passages. It includes a reusable client, a keyword-search control,

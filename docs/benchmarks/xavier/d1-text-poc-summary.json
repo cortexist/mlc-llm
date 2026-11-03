@@ -1,0 +1,334 @@
+{
+  "hardware": "Jetson AGX Xavier 32 GB, JetPack 5.1.8, CUDA 11.4, sm_72",
+  "scope": "text only, fixed padded 256 tokens, 1..4 bool/single-choice questions",
+  "checkpoint_parameters": 1728801536,
+  "cpu_tiny_max_abs_error": 1.014e-06,
+  "fp32": [
+    {
+      "tokens": 39,
+      "max_abs_hidden": 6.67572021484375e-05,
+      "answers": {
+        "network": {
+          "type": "noul",
+          "noul": 0.8797927901427173
+        }
+      },
+      "warm_timings": [
+        {
+          "inference_ms": 993.9056090006488,
+          "total_ms": 997.1799069990084
+        },
+        {
+          "inference_ms": 992.7055499993003,
+          "total_ms": 996.0266029993363
+        },
+        {
+          "inference_ms": 996.241585999087,
+          "total_ms": 999.1814029999659
+        }
+      ]
+    },
+    {
+      "tokens": 81,
+      "max_abs_hidden": 9.34600830078125e-05,
+      "answers": {
+        "route": {
+          "type": "choice",
+          "choice": "build",
+          "probabilities": {
+            "network": 0.008764752775412044,
+            "build": 0.8948230514656164,
+            "unknown": 0.09641219575897159
+          }
+        },
+        "enough": {
+          "type": "noul",
+          "noul": 0.9382523671360066
+        }
+      },
+      "warm_timings": [
+        {
+          "inference_ms": 1001.5325479998864,
+          "total_ms": 1005.3681209992646
+        },
+        {
+          "inference_ms": 992.7519399989251,
+          "total_ms": 997.9090139986511
+        },
+        {
+          "inference_ms": 1005.7330919989909,
+          "total_ms": 1009.5047569993767
+        }
+      ]
+    }
+  ],
+  "fp16": [
+    {
+      "tokens": 39,
+      "precision": "f16",
+      "hidden_cosine": 0.9999990071540464,
+      "max_abs_hidden": 0.0344085693359375,
+      "answers": {
+        "network": {
+          "type": "noul",
+          "noul": 0.8799274516187755
+        }
+      },
+      "warm_timings": [
+        {
+          "inference_ms": 276.5602210001816,
+          "total_ms": 280.7621760002803
+        },
+        {
+          "inference_ms": 276.83402500042575,
+          "total_ms": 280.90858299947286
+        },
+        {
+          "inference_ms": 276.7749509985151,
+          "total_ms": 280.84922000016377
+        }
+      ]
+    },
+    {
+      "tokens": 81,
+      "precision": "f16",
+      "hidden_cosine": 0.9999987449495312,
+      "max_abs_hidden": 0.06412887573242188,
+      "answers": {
+        "route": {
+          "type": "choice",
+          "choice": "build",
+          "probabilities": {
+            "network": 0.008751244785239743,
+            "build": 0.8950904829995501,
+            "unknown": 0.09615827221521014
+          }
+        },
+        "enough": {
+          "type": "noul",
+          "noul": 0.9383731870997554
+        }
+      },
+      "warm_timings": [
+        {
+          "inference_ms": 277.17397599917604,
+          "total_ms": 281.3253700005589
+        },
+        {
+          "inference_ms": 277.04056200127525,
+          "total_ms": 281.8553780016373
+        },
+        {
+          "inference_ms": 276.4554469995346,
+          "total_ms": 280.60267999899224
+        }
+      ]
+    }
+  ],
+  "http_development_trial": {
+    "summary": {
+      "samples": 12,
+      "d1_correct": 12,
+      "nemo_correct": 12,
+      "d1_brier": 0.03621179760690656,
+      "repeated_http_median_ms": 310.4553380399011,
+      "alternating_http_median_ms": 291.56938049709424,
+      "nemo_http_median_ms": 596.0964764817618,
+      "resident_instances": 1
+    },
+    "repeated_http_ms": [
+      327.52810104284436,
+      291.8920540250838,
+      293.38257503695786,
+      345.3231429448351
+    ],
+    "rows": [
+      {
+        "question": "Which port does the API use?",
+        "evidence": "The API listens on port 8443.",
+        "expected": true,
+        "d1_probability": 0.9428441467131287,
+        "d1_correct": true,
+        "nemo_answer": "yes",
+        "nemo_correct": true,
+        "d1_http_ms": 294.64958095923066,
+        "nemo_http_ms": 1180.7200020411983,
+        "forward_ms": 275.55999600008363,
+        "queue_ms": 0.0
+      },
+      {
+        "question": "Which port does the API use?",
+        "evidence": "The API uses HTTPS. Its port is not recorded.",
+        "expected": false,
+        "d1_probability": 0.2389599650331391,
+        "d1_correct": true,
+        "nemo_answer": "no",
+        "nemo_correct": true,
+        "d1_http_ms": 295.37976102437824,
+        "nemo_http_ms": 587.3946889769286,
+        "forward_ms": 275.1279429994611,
+        "queue_ms": 0.0
+      },
+      {
+        "question": "How do I restart the service?",
+        "evidence": "Run systemctl restart example-api to restart the service.",
+        "expected": true,
+        "d1_probability": 0.9256619279499672,
+        "d1_correct": true,
+        "nemo_answer": "yes",
+        "nemo_correct": true,
+        "d1_http_ms": 291.2479459773749,
+        "nemo_http_ms": 610.8483959687874,
+        "forward_ms": 275.7523880009103,
+        "queue_ms": 0.0
+      },
+      {
+        "question": "How do I restart the service?",
+        "evidence": "The service is currently active.",
+        "expected": false,
+        "d1_probability": 0.07088014643284286,
+        "d1_correct": true,
+        "nemo_answer": "no",
+        "nemo_correct": true,
+        "d1_http_ms": 288.0965149961412,
+        "nemo_http_ms": 629.3147099204361,
+        "forward_ms": 275.8286459993542,
+        "queue_ms": 0.0
+      },
+      {
+        "question": "What enables Node system CA trust?",
+        "evidence": "Set NODE_USE_SYSTEM_CA=1 to enable Node system CA trust.",
+        "expected": true,
+        "d1_probability": 0.9315585098232995,
+        "d1_correct": true,
+        "nemo_answer": "yes",
+        "nemo_correct": true,
+        "d1_http_ms": 292.8176639834419,
+        "nemo_http_ms": 633.3048850065097,
+        "forward_ms": 276.48170099928393,
+        "queue_ms": 0.0
+      },
+      {
+        "question": "What enables Node system CA trust?",
+        "evidence": "The root certificate is installed. Node settings are not documented.",
+        "expected": false,
+        "d1_probability": 0.49184413179061875,
+        "d1_correct": true,
+        "nemo_answer": "no",
+        "nemo_correct": true,
+        "d1_http_ms": 294.08868006430566,
+        "nemo_http_ms": 604.798263986595,
+        "forward_ms": 276.53543099950184,
+        "queue_ms": 0.0
+      },
+      {
+        "question": "How much RAM is required?",
+        "evidence": "This deployment requires at least 16 GiB of RAM.",
+        "expected": true,
+        "d1_probability": 0.940663273737062,
+        "d1_correct": true,
+        "nemo_answer": "yes",
+        "nemo_correct": true,
+        "d1_http_ms": 291.8908150168136,
+        "nemo_http_ms": 651.181150926277,
+        "forward_ms": 275.9371629999805,
+        "queue_ms": 0.0
+      },
+      {
+        "question": "How much RAM is required?",
+        "evidence": "This deployment uses CUDA 11.4.",
+        "expected": false,
+        "d1_probability": 0.04232137652680862,
+        "d1_correct": true,
+        "nemo_answer": "no",
+        "nemo_correct": true,
+        "d1_http_ms": 288.55052101425827,
+        "nemo_http_ms": 583.6889719357714,
+        "forward_ms": 273.39122100056557,
+        "queue_ms": 0.0
+      },
+      {
+        "question": "Where is the model stored?",
+        "evidence": "The model weights are stored in /opt/models/example.",
+        "expected": true,
+        "d1_probability": 0.9328526501965433,
+        "d1_correct": true,
+        "nemo_answer": "yes",
+        "nemo_correct": true,
+        "d1_http_ms": 290.05694098304957,
+        "nemo_http_ms": 573.6187680158764,
+        "forward_ms": 273.65020900106174,
+        "queue_ms": 0.0
+      },
+      {
+        "question": "Where is the model stored?",
+        "evidence": "The weights were downloaded yesterday.",
+        "expected": false,
+        "d1_probability": 0.26822880328055876,
+        "d1_correct": true,
+        "nemo_answer": "no",
+        "nemo_correct": true,
+        "d1_http_ms": 289.4107060274109,
+        "nemo_http_ms": 564.99150802847,
+        "forward_ms": 274.97068499906163,
+        "queue_ms": 0.0
+      },
+      {
+        "question": "What is the maximum input length?",
+        "evidence": "Requests must contain at most 256 tokens including formatting.",
+        "expected": true,
+        "d1_probability": 0.8393043972560978,
+        "d1_correct": true,
+        "nemo_answer": "yes",
+        "nemo_correct": true,
+        "d1_http_ms": 290.55411589797586,
+        "nemo_http_ms": 585.4253219440579,
+        "forward_ms": 275.33364500050084,
+        "queue_ms": 0.0
+      },
+      {
+        "question": "What is the maximum input length?",
+        "evidence": "Oversized requests are rejected, but the limit is not recorded.",
+        "expected": false,
+        "d1_probability": 0.09714629652980064,
+        "d1_correct": true,
+        "nemo_answer": "no",
+        "nemo_correct": true,
+        "d1_http_ms": 301.3265279587358,
+        "nemo_http_ms": 580.3549599368125,
+        "forward_ms": 275.5210139985138,
+        "queue_ms": 0.0
+      }
+    ]
+  },
+  "sampled_available_ram_mib_after_trial": 15032,
+  "resident_workers": [
+    "nemotron",
+    "embeddinggemma-2",
+    "d1-omni-2b"
+  ],
+  "limitations": [
+    "Two actual-checkpoint reference fixtures; not broad calibration qualification.",
+    "Twelve authored evidence cases; not held-out.",
+    "Repeated and alternating HTTP inputs differ; not isolated switching overhead.",
+    "Audio/vision/video not implemented; no long stability or full-capacity quality qualification."
+  ],
+  "concurrent_fifo_check": {
+    "d1_queue_wait_ms": 2093.0,
+    "decision": {
+      "answers": {
+        "network": {
+          "type": "noul",
+          "noul": 0.9380769554029703
+        }
+      },
+      "usage": {
+        "input_tokens": 31,
+        "output_tokens": 0
+      },
+      "model": "d1-omni-2b"
+    },
+    "chat_output_tokens": 60
+  },
+  "full_vocabulary_vs_selected_rows_max_probability_error": 3.634e-07
+}

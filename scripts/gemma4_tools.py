@@ -111,9 +111,13 @@ def parse_output(text, allowed_names):
                 raise ToolFormatError("Incomplete native thinking channel")
             text = text[end + len("<channel|>") :]
             continue
-        match = re.match(r"call:([A-Za-z_][\w.-]*)", text)
-        if match is None or match[1] not in allowed_names:
-            raise ToolFormatError("Model emitted an undeclared or invalid tool name")
+        # Some valid generations put whitespace after the marker or colon.
+        # Normalize syntax only; never guess or remap undeclared tool names.
+        match = re.match(r"\s*call:\s*([A-Za-z_][\w.-]*)", text)
+        if match is None:
+            raise ToolFormatError("Model emitted an invalid native tool-call header")
+        if match[1] not in allowed_names:
+            raise ToolFormatError(f"Model emitted an undeclared tool name: {match[1][:80]!r}")
         parser = ValueParser(text[match.end() :])
         arguments = parser.value()
         if not isinstance(arguments, dict) or not parser.take(CALL_END):
@@ -233,7 +237,7 @@ class Gemma4ToolAdapter:
         async def collect():
             text, finish, usage = "", "stop", None
             generator = self.engine._handle_completion(
-                completion, request_id, request_final_usage_include_extra=False
+                completion, request_id, request_final_usage_include_extra=True
             )
             try:
                 async for response in generator:
@@ -241,6 +245,13 @@ class Gemma4ToolAdapter:
                         raise asyncio.CancelledError()
                     if response.usage is not None:
                         usage = response.usage.model_dump(exclude={"extra"})
+                        metrics = getattr(response.usage, "extra", None) or {}
+                        if "prefill_tokens" in metrics:
+                            usage["prompt_tokens_details"] = {
+                                "cached_tokens": max(
+                                    0, usage["prompt_tokens"] - metrics["prefill_tokens"]
+                                )
+                            }
                     for choice in response.choices:
                         text += choice.text
                         finish = choice.finish_reason or finish

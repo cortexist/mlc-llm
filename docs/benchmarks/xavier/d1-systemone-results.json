@@ -1,0 +1,594 @@
+{
+  "summary": {
+    "cases": 14,
+    "all_labels_correct": 13,
+    "labels": 30,
+    "labels_correct": 28,
+    "http_median_ms": 2595.4961725510657,
+    "forward_median_ms": 2484.6004655009892,
+    "min_input_tokens": 160,
+    "max_input_tokens": 1336,
+    "protocol_checks": "passed",
+    "limitation": "Authored synthetic development cases, not held-out calibration"
+  },
+  "rows": [
+    {
+      "name": "meeting",
+      "response": {
+        "answers": {
+          "spam": {
+            "type": "noul",
+            "noul": 0.06614973137688712
+          },
+          "phishing": {
+            "type": "noul",
+            "noul": 0.07008143282855245
+          },
+          "priority": {
+            "type": "noul",
+            "noul": 0.9691783621109543
+          }
+        },
+        "usage": {
+          "input_tokens": 424,
+          "output_tokens": 0
+        },
+        "model": "d1-omni-2b"
+      },
+      "http_ms": 2592.832096037455,
+      "timings": {
+        "x-xavier-decision-inference-ms": "2472.084390999953",
+        "x-xavier-decision-total-ms": "2484.4311240012757",
+        "x-xavier-decision-instance": "56dd4813eef846f7bcceccfd732e1efd",
+        "x-xavier-queue-wait-ms": "0"
+      },
+      "expected": {
+        "spam": false,
+        "phishing": false,
+        "priority": true
+      },
+      "observed": {
+        "spam": false,
+        "phishing": false,
+        "priority": true
+      },
+      "correct": {
+        "spam": true,
+        "phishing": true,
+        "priority": true
+      }
+    },
+    {
+      "name": "receipt",
+      "response": {
+        "answers": {
+          "spam": {
+            "type": "noul",
+            "noul": 0.044997790470683176
+          },
+          "phishing": {
+            "type": "noul",
+            "noul": 0.07255470419816176
+          },
+          "priority": {
+            "type": "noul",
+            "noul": 0.07261335103661676
+          }
+        },
+        "usage": {
+          "input_tokens": 427,
+          "output_tokens": 0
+        },
+        "model": "d1-omni-2b"
+      },
+      "http_ms": 2514.83710098546,
+      "timings": {
+        "x-xavier-decision-inference-ms": "2477.0088139994186",
+        "x-xavier-decision-total-ms": "2487.190677000399",
+        "x-xavier-decision-instance": "56dd4813eef846f7bcceccfd732e1efd",
+        "x-xavier-queue-wait-ms": "0"
+      },
+      "expected": {
+        "spam": false,
+        "phishing": false,
+        "priority": false
+      },
+      "observed": {
+        "spam": false,
+        "phishing": false,
+        "priority": false
+      },
+      "correct": {
+        "spam": true,
+        "phishing": true,
+        "priority": true
+      }
+    },
+    {
+      "name": "subscribed-newsletter",
+      "response": {
+        "answers": {
+          "spam": {
+            "type": "noul",
+            "noul": 0.03505290625751138
+          },
+          "phishing": {
+            "type": "noul",
+            "noul": 0.06426924880256964
+          },
+          "priority": {
+            "type": "noul",
+            "noul": 0.04540074395028372
+          }
+        },
+        "usage": {
+          "input_tokens": 457,
+          "output_tokens": 0
+        },
+        "model": "d1-omni-2b"
+      },
+      "http_ms": 2600.547780049965,
+      "timings": {
+        "x-xavier-decision-inference-ms": "2490.6878969995887",
+        "x-xavier-decision-total-ms": "2501.5451199997187",
+        "x-xavier-decision-instance": "56dd4813eef846f7bcceccfd732e1efd",
+        "x-xavier-queue-wait-ms": "0"
+      },
+      "expected": {
+        "spam": false,
+        "phishing": false,
+        "priority": false
+      },
+      "observed": {
+        "spam": false,
+        "phishing": false,
+        "priority": false
+      },
+      "correct": {
+        "spam": true,
+        "phishing": true,
+        "priority": true
+      }
+    },
+    {
+      "name": "unsolicited-marketing",
+      "response": {
+        "answers": {
+          "spam": {
+            "type": "noul",
+            "noul": 0.943124632112667
+          },
+          "phishing": {
+            "type": "noul",
+            "noul": 0.8919207975207186
+          },
+          "priority": {
+            "type": "noul",
+            "noul": 0.8434622647370967
+          }
+        },
+        "usage": {
+          "input_tokens": 420,
+          "output_tokens": 0
+        },
+        "model": "d1-omni-2b"
+      },
+      "http_ms": 2522.821967024356,
+      "timings": {
+        "x-xavier-decision-inference-ms": "2489.031172999603",
+        "x-xavier-decision-total-ms": "2499.6700809988397",
+        "x-xavier-decision-instance": "56dd4813eef846f7bcceccfd732e1efd",
+        "x-xavier-queue-wait-ms": "0"
+      },
+      "expected": {
+        "spam": true,
+        "phishing": false,
+        "priority": false
+      },
+      "observed": {
+        "spam": true,
+        "phishing": true,
+        "priority": true
+      },
+      "correct": {
+        "spam": true,
+        "phishing": false,
+        "priority": false
+      }
+    },
+    {
+      "name": "credential-phishing",
+      "response": {
+        "answers": {
+          "spam": {
+            "type": "noul",
+            "noul": 0.9233955219600097
+          },
+          "phishing": {
+            "type": "noul",
+            "noul": 0.9438375442508833
+          },
+          "priority": {
+            "type": "noul",
+            "noul": 0.9694201677964345
+          }
+        },
+        "usage": {
+          "input_tokens": 452,
+          "output_tokens": 0
+        },
+        "model": "d1-omni-2b"
+      },
+      "http_ms": 2526.13484300673,
+      "timings": {
+        "x-xavier-decision-inference-ms": "2488.9526729984937",
+        "x-xavier-decision-total-ms": "2499.9362050002674",
+        "x-xavier-decision-instance": "56dd4813eef846f7bcceccfd732e1efd",
+        "x-xavier-queue-wait-ms": "0"
+      },
+      "expected": {
+        "spam": true,
+        "phishing": true,
+        "priority": true
+      },
+      "observed": {
+        "spam": true,
+        "phishing": true,
+        "priority": true
+      },
+      "correct": {
+        "spam": true,
+        "phishing": true,
+        "priority": true
+      }
+    },
+    {
+      "name": "invoice-phishing",
+      "response": {
+        "answers": {
+          "spam": {
+            "type": "noul",
+            "noul": 0.946059449192012
+          },
+          "phishing": {
+            "type": "noul",
+            "noul": 0.9511845386637493
+          },
+          "priority": {
+            "type": "noul",
+            "noul": 0.9635101891143413
+          }
+        },
+        "usage": {
+          "input_tokens": 452,
+          "output_tokens": 0
+        },
+        "model": "d1-omni-2b"
+      },
+      "http_ms": 2643.187862006016,
+      "timings": {
+        "x-xavier-decision-inference-ms": "2486.456390000967",
+        "x-xavier-decision-total-ms": "2497.1332200002507",
+        "x-xavier-decision-instance": "56dd4813eef846f7bcceccfd732e1efd",
+        "x-xavier-queue-wait-ms": "0"
+      },
+      "expected": {
+        "spam": true,
+        "phishing": true,
+        "priority": true
+      },
+      "observed": {
+        "spam": true,
+        "phishing": true,
+        "priority": true
+      },
+      "correct": {
+        "spam": true,
+        "phishing": true,
+        "priority": true
+      }
+    },
+    {
+      "name": "support-response",
+      "response": {
+        "answers": {
+          "spam": {
+            "type": "noul",
+            "noul": 0.03995193747889727
+          },
+          "phishing": {
+            "type": "noul",
+            "noul": 0.07996408771590949
+          },
+          "priority": {
+            "type": "noul",
+            "noul": 0.8287034154138886
+          }
+        },
+        "usage": {
+          "input_tokens": 427,
+          "output_tokens": 0
+        },
+        "model": "d1-omni-2b"
+      },
+      "http_ms": 2598.1602490646765,
+      "timings": {
+        "x-xavier-decision-inference-ms": "2480.1947750002",
+        "x-xavier-decision-total-ms": "2490.3617879990634",
+        "x-xavier-decision-instance": "56dd4813eef846f7bcceccfd732e1efd",
+        "x-xavier-queue-wait-ms": "0"
+      },
+      "expected": {
+        "spam": false,
+        "phishing": false,
+        "priority": true
+      },
+      "observed": {
+        "spam": false,
+        "phishing": false,
+        "priority": true
+      },
+      "correct": {
+        "spam": true,
+        "phishing": true,
+        "priority": true
+      }
+    },
+    {
+      "name": "long-project-update",
+      "response": {
+        "answers": {
+          "spam": {
+            "type": "noul",
+            "noul": 0.3096382127745793
+          },
+          "phishing": {
+            "type": "noul",
+            "noul": 0.14755456046070836
+          },
+          "priority": {
+            "type": "noul",
+            "noul": 0.9701229044254946
+          }
+        },
+        "usage": {
+          "input_tokens": 1336,
+          "output_tokens": 0
+        },
+        "model": "d1-omni-2b"
+      },
+      "http_ms": 2622.878720983863,
+      "timings": {
+        "x-xavier-decision-inference-ms": "2480.602312998599",
+        "x-xavier-decision-total-ms": "2495.6956090009044",
+        "x-xavier-decision-instance": "56dd4813eef846f7bcceccfd732e1efd",
+        "x-xavier-queue-wait-ms": "0"
+      },
+      "expected": {
+        "spam": false,
+        "phishing": false,
+        "priority": true
+      },
+      "observed": {
+        "spam": false,
+        "phishing": false,
+        "priority": true
+      },
+      "correct": {
+        "spam": true,
+        "phishing": true,
+        "priority": true
+      }
+    },
+    {
+      "name": "no-reply",
+      "response": {
+        "answers": {
+          "no_reply": {
+            "type": "noul",
+            "noul": 0.9184374172788258
+          }
+        },
+        "usage": {
+          "input_tokens": 224,
+          "output_tokens": 0
+        },
+        "model": "d1-omni-2b"
+      },
+      "http_ms": 2516.9080989435315,
+      "timings": {
+        "x-xavier-decision-inference-ms": "2482.917236000503",
+        "x-xavier-decision-total-ms": "2491.45056999987",
+        "x-xavier-decision-instance": "56dd4813eef846f7bcceccfd732e1efd",
+        "x-xavier-queue-wait-ms": "0"
+      },
+      "expected": {
+        "no_reply": true
+      },
+      "observed": {
+        "no_reply": true
+      },
+      "correct": {
+        "no_reply": true
+      }
+    },
+    {
+      "name": "human",
+      "response": {
+        "answers": {
+          "no_reply": {
+            "type": "noul",
+            "noul": 0.07977276699031147
+          }
+        },
+        "usage": {
+          "input_tokens": 212,
+          "output_tokens": 0
+        },
+        "model": "d1-omni-2b"
+      },
+      "http_ms": 2602.7845229255036,
+      "timings": {
+        "x-xavier-decision-inference-ms": "2483.4363010013476",
+        "x-xavier-decision-total-ms": "2491.3210600007005",
+        "x-xavier-decision-instance": "56dd4813eef846f7bcceccfd732e1efd",
+        "x-xavier-queue-wait-ms": "0"
+      },
+      "expected": {
+        "no_reply": false
+      },
+      "observed": {
+        "no_reply": false
+      },
+      "correct": {
+        "no_reply": true
+      }
+    },
+    {
+      "name": "support-inbox",
+      "response": {
+        "answers": {
+          "no_reply": {
+            "type": "noul",
+            "noul": 0.03797802289700028
+          }
+        },
+        "usage": {
+          "input_tokens": 218,
+          "output_tokens": 0
+        },
+        "model": "d1-omni-2b"
+      },
+      "http_ms": 2520.041234092787,
+      "timings": {
+        "x-xavier-decision-inference-ms": "2489.695602998836",
+        "x-xavier-decision-total-ms": "2497.9618529996515",
+        "x-xavier-decision-instance": "56dd4813eef846f7bcceccfd732e1efd",
+        "x-xavier-queue-wait-ms": "0"
+      },
+      "expected": {
+        "no_reply": false
+      },
+      "observed": {
+        "no_reply": false
+      },
+      "correct": {
+        "no_reply": true
+      }
+    },
+    {
+      "name": "automated-but-monitored",
+      "response": {
+        "answers": {
+          "no_reply": {
+            "type": "noul",
+            "noul": 0.058787683304128986
+          }
+        },
+        "usage": {
+          "input_tokens": 238,
+          "output_tokens": 0
+        },
+        "model": "d1-omni-2b"
+      },
+      "http_ms": 2521.8679130775854,
+      "timings": {
+        "x-xavier-decision-inference-ms": "2491.123734998837",
+        "x-xavier-decision-total-ms": "2499.0067339986126",
+        "x-xavier-decision-instance": "56dd4813eef846f7bcceccfd732e1efd",
+        "x-xavier-queue-wait-ms": "0"
+      },
+      "expected": {
+        "no_reply": false
+      },
+      "observed": {
+        "no_reply": false
+      },
+      "correct": {
+        "no_reply": true
+      }
+    },
+    {
+      "name": "related-reference",
+      "response": {
+        "answers": {
+          "useful": {
+            "type": "noul",
+            "noul": 0.9596745125737299
+          }
+        },
+        "usage": {
+          "input_tokens": 164,
+          "output_tokens": 0
+        },
+        "model": "d1-omni-2b"
+      },
+      "http_ms": 2638.451535953209,
+      "timings": {
+        "x-xavier-decision-inference-ms": "2485.764630000631",
+        "x-xavier-decision-total-ms": "2493.299677000323",
+        "x-xavier-decision-instance": "56dd4813eef846f7bcceccfd732e1efd",
+        "x-xavier-queue-wait-ms": "0"
+      },
+      "expected": {
+        "useful": true
+      },
+      "observed": {
+        "useful": true
+      },
+      "correct": {
+        "useful": true
+      }
+    },
+    {
+      "name": "unrelated-reference",
+      "response": {
+        "answers": {
+          "useful": {
+            "type": "noul",
+            "noul": 0.01695892819237428
+          }
+        },
+        "usage": {
+          "input_tokens": 160,
+          "output_tokens": 0
+        },
+        "model": "d1-omni-2b"
+      },
+      "http_ms": 2662.7034419216216,
+      "timings": {
+        "x-xavier-decision-inference-ms": "2481.719346000318",
+        "x-xavier-decision-total-ms": "2489.403070998378",
+        "x-xavier-decision-instance": "56dd4813eef846f7bcceccfd732e1efd",
+        "x-xavier-queue-wait-ms": "0"
+      },
+      "expected": {
+        "useful": false
+      },
+      "observed": {
+        "useful": false
+      },
+      "correct": {
+        "useful": true
+      }
+    }
+  ],
+  "choice": {
+    "answers": {
+      "route": {
+        "type": "choice",
+        "choice": "build",
+        "confidence": 0.9384755097543251,
+        "probabilities": {
+          "build": 0.9384755097543251,
+          "network": 0.0615244902456749
+        }
+      }
+    },
+    "usage": {
+      "input_tokens": 54,
+      "output_tokens": 0
+    },
+    "model": "d1-omni-2b"
+  }
+}

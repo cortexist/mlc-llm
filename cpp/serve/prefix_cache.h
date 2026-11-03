@@ -140,9 +140,11 @@ class PrefixCache : public ObjectRef {
    * \brief Initialization of prefix cache.
    * \param max_recycling_seqs The maximum number of recycling sequences in prefix cache.
    * \param remove_callback The optional callback function to call when removing a sequence.
+   * \param recycling_only Reuse idle sequences without forking shared KV blocks.
    */
   static PrefixCache CreateRadixPrefixCache(size_t max_recycling_seqs,
-                                            PrefixCacheRemoveCallback remove_callback = nullptr);
+                                            PrefixCacheRemoveCallback remove_callback = nullptr,
+                                            bool recycling_only = false);
   /*!
    * \brief Initialization of no prefix cache.
    */

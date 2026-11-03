@@ -50,10 +50,11 @@ class DFlashNewRequestPrefillActionObj : public BatchPrefillBaseActionObj {
     }
 
     int num_rsentries = prefill_inputs.size();
+    std::vector<int> matched_lengths(num_rsentries, 0);
     {
       NVTXScopedRange nvtx_scope("DFlashPrefill matching prefix");
       for (int i = 0; i < num_rsentries; ++i) {
-        MatchPrefixCache(estate, &prefill_inputs[i]);
+        matched_lengths[i] = MatchPrefixCache(estate, &prefill_inputs[i]);
       }
     }
 
@@ -91,9 +92,9 @@ class DFlashNewRequestPrefillActionObj : public BatchPrefillBaseActionObj {
         TVM_FFI_ICHECK(mstate->draft_output_tokens.empty());
         TVM_FFI_ICHECK(mstate->draft_token_slots.empty());
         if (status_before_prefill[i] == RequestStateStatus::kPending) {
-          // Pending entries start a fresh prefill (including after preemption).
-          // Never append to context left by an earlier use of this internal ID.
-          projected_hidden_state_map.erase(mstate->internal_id);
+          // A prefix hit has already restored/truncated the corresponding draft
+          // features. A miss (including preemption) must discard old ID contents.
+          if (matched_lengths[i] == 0) projected_hidden_state_map.erase(mstate->internal_id);
           if (!estate->prefix_cache->HasSequence(mstate->internal_id)) {
             if (rsentry->parent_idx == -1) {
               models_[model_id]->AddNewSequence(mstate->internal_id);
@@ -296,25 +297,27 @@ class DFlashNewRequestPrefillActionObj : public BatchPrefillBaseActionObj {
           models_[0]->EnableSlidingWindowForSeq(rsentry->mstates[0]->internal_id);
         }
       } else {
+        auto& states = *model_workspaces_[0].dflash_projected_target_hidden;
+        int64_t source_id = result.forked_seq_id != -1 ? result.forked_seq_id : result.reused_seq_id;
+        const auto source = states.find(source_id);
+        TVM_FFI_ICHECK(source != states.end()) << "Missing DFlash prefix context";
+        TVM_FFI_ICHECK_GE(source->second.length, result.prefilled_offset);
         if (result.forked_seq_id != -1) {
-          TVM_FFI_ICHECK_EQ(result.reused_seq_id, -1);
-          TVM_FFI_ICHECK_EQ(result.reused_seq_pop_last_tokens, 0);
-          // Fork from active sequence — only target model
+          // Only enabled with the runtime's independent, linear KV-copy path.
+          DFlashProjectedHiddenState restored;
+          ResetProjectedHiddenState(&restored, source->second.View(), 0, result.prefilled_offset);
+          states[rsentry->mstates[0]->internal_id] = std::move(restored);
           models_[0]->ForkSequence(result.forked_seq_id, rsentry->mstates[0]->internal_id,
                                    result.prefilled_offset);
-          if (rsentry->child_indices.empty()) {
-            models_[0]->EnableSlidingWindowForSeq(rsentry->mstates[0]->internal_id);
-          }
         } else {
-          // Reuse recycling sequence
-          TVM_FFI_ICHECK_EQ(result.forked_seq_id, -1);
+          source->second.length = result.prefilled_offset;
           estate->id_manager.RecycleId(rsentry->mstates[0]->internal_id);
           for (int i = 0; i < rsentry->mstates.size(); ++i) {
             rsentry->mstates[i]->internal_id = result.reused_seq_id;
           }
           if (result.reused_seq_pop_last_tokens > 0) {
             models_[0]->PopNFromKVCache(rsentry->mstates[0]->internal_id,
-                                        result.reused_seq_pop_last_tokens);
+                                       result.reused_seq_pop_last_tokens);
           }
         }
       }

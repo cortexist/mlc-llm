@@ -1,0 +1,195 @@
+{
+  "device": "Jetson AGX Xavier 32 GB",
+  "model": "Nemotron 3.5 Bolt E4B q4f16_1",
+  "date": "2026-11-02",
+  "mode": "DFlash, two proposals, greedy",
+  "context": 16384,
+  "prefill_chunk": 512,
+  "recycled_prefix_limit": 1,
+  "prefix_policy": "Reuse/rewind idle sequences only; never fork an active or recycled prefix",
+  "runtime_sha256": "6f6d1592085dee895ae9726144c055d3c97ca51ee4be23d4257f5a60faa6e923",
+  "protocol": "One sequential pass per mode; identical input IDs and case order. First case includes cold workspace effects. Short functional/latency trial, not sustained or full-context qualification.",
+  "cases": [
+    {
+      "case": "cold",
+      "prompt_tokens": 910,
+      "output_tokens": 24,
+      "uncached_prefill_tokens": 910,
+      "cached_prefill_tokens": 910,
+      "uncached_ttft_s": 3.0543892730000004,
+      "cached_ttft_s": 3.039794419,
+      "uncached_total_s": 4.056275470000401,
+      "cached_total_s": 4.049860411992995,
+      "text_equal": true
+    },
+    {
+      "case": "repeat",
+      "prompt_tokens": 910,
+      "output_tokens": 24,
+      "uncached_prefill_tokens": 910,
+      "cached_prefill_tokens": 1,
+      "uncached_ttft_s": 2.159180274,
+      "cached_ttft_s": 0.22528436100000002,
+      "uncached_total_s": 2.8647453609955846,
+      "cached_total_s": 0.9452749000047334,
+      "text_equal": true
+    },
+    {
+      "case": "append",
+      "prompt_tokens": 942,
+      "output_tokens": 24,
+      "uncached_prefill_tokens": 942,
+      "cached_prefill_tokens": 32,
+      "uncached_ttft_s": 2.2648287220000003,
+      "cached_ttft_s": 0.320723606,
+      "uncached_total_s": 3.2017451810024795,
+      "cached_total_s": 1.2598334819922457,
+      "text_equal": true
+    },
+    {
+      "case": "shorter_fork",
+      "prompt_tokens": 448,
+      "output_tokens": 24,
+      "uncached_prefill_tokens": 448,
+      "cached_prefill_tokens": 1,
+      "uncached_ttft_s": 0.8637660890000001,
+      "cached_ttft_s": 0.218196,
+      "uncached_total_s": 1.4392602419975447,
+      "cached_total_s": 0.7839097979885992,
+      "text_equal": true
+    },
+    {
+      "case": "unrelated",
+      "prompt_tokens": 161,
+      "output_tokens": 24,
+      "uncached_prefill_tokens": 161,
+      "cached_prefill_tokens": 157,
+      "uncached_ttft_s": 0.49832039800000005,
+      "cached_ttft_s": 0.48489610400000005,
+      "uncached_total_s": 1.3394070640060818,
+      "cached_total_s": 1.3163965319981799,
+      "text_equal": true
+    },
+    {
+      "case": "after_eviction",
+      "prompt_tokens": 910,
+      "output_tokens": 24,
+      "uncached_prefill_tokens": 910,
+      "cached_prefill_tokens": 906,
+      "uncached_ttft_s": 2.17250347,
+      "cached_ttft_s": 2.1951176670000003,
+      "uncached_total_s": 2.8671309240016853,
+      "cached_total_s": 2.9022999389999313,
+      "text_equal": true
+    },
+    {
+      "case": "after_abort",
+      "prompt_tokens": 910,
+      "output_tokens": 24,
+      "uncached_prefill_tokens": 910,
+      "cached_prefill_tokens": 1,
+      "uncached_ttft_s": 2.199087351,
+      "cached_ttft_s": 0.227067612,
+      "uncached_total_s": 2.8941849679977167,
+      "cached_total_s": 0.9483260379929561,
+      "text_equal": true
+    },
+    {
+      "case": "after_reset",
+      "prompt_tokens": 910,
+      "output_tokens": 24,
+      "uncached_prefill_tokens": 910,
+      "cached_prefill_tokens": 910,
+      "uncached_ttft_s": 2.1681587120000003,
+      "cached_ttft_s": 2.1882070160000002,
+      "uncached_total_s": 2.857366838004964,
+      "cached_total_s": 2.8952312149922363,
+      "text_equal": true
+    }
+  ],
+  "long_conversation": {
+    "prompt_tokens": 4346,
+    "output_tokens": 160,
+    "cached_prefill_tokens": 1876,
+    "uncached_total_s": 24.161498692999885,
+    "cached_total_s": 16.160179982005502,
+    "uncached_ttft_s": 18.97264165,
+    "cached_ttft_s": 11.003298045000001,
+    "text_equal": true
+  },
+  "pi": [
+    {
+      "case": "first_workspace_search",
+      "total_s": 30.361515615019016,
+      "input_tokens": 3918,
+      "output_tokens": 386
+    },
+    {
+      "case": "repeated_workspace_search",
+      "total_s": 26.49234785302542,
+      "input_tokens": 4346,
+      "output_tokens": 433
+    },
+    {
+      "case": "switch_to_general_france",
+      "total_s": 21.174704075907357,
+      "input_tokens": 4700,
+      "output_tokens": 10
+    },
+    {
+      "case": "general_git",
+      "total_s": 6.391448665992357,
+      "input_tokens": 4726,
+      "output_tokens": 120
+    },
+    {
+      "case": "general_france_again",
+      "total_s": 0.8530090959975496,
+      "input_tokens": 4864,
+      "output_tokens": 10
+    }
+  ],
+  "pi_uncached_reference": [
+    {
+      "case": "first_workspace_search",
+      "total_s": 30.052603860967793,
+      "input_tokens": 3918,
+      "output_tokens": 386
+    },
+    {
+      "case": "repeated_workspace_search",
+      "total_s": 32.5614861890208,
+      "input_tokens": 4346,
+      "output_tokens": 386
+    },
+    {
+      "case": "switch_to_general_france",
+      "total_s": 21.62766014994122,
+      "input_tokens": 4654,
+      "output_tokens": 10
+    }
+  ],
+  "pi_note": "Single real Pi sequence. All benchmark values preserved; full wording/length differs. Topic changes alter the system prompt and limit reuse. Original shorthand Git question still sometimes over-explains beyond the requested unstaging command.",
+  "http_checks": {
+    "tool_call": {
+      "name": "get_weather",
+      "arguments": "{\"location\": \"Paris, France\"}"
+    },
+    "tool_result_answer": "ORBIT-4827",
+    "repeated_tool_result_equal": true,
+    "after_cancel_answer": "391",
+    "embedding_dimensions": 768,
+    "models": [
+      "nemotron",
+      "d1-omni-2b",
+      "embeddinggemma-2"
+    ],
+    "times_s": [
+      0.8671179100638255,
+      0.5908996500074863,
+      0.4375043240142986,
+      0.6025056669022888
+    ]
+  },
+  "rejected_prototypes": "Fork-based and chunk-aligned fork reuse changed benchmark numbers. Reproduced with original attention kernels and with draft proposals disabled. Final recycling-only policy avoids the shared-depth KV path."
+}

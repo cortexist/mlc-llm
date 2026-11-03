@@ -10,6 +10,7 @@ from mlc_llm.protocol.artifact_manifest import ArtifactDefinition
 from mlc_llm.quantization import make_quantization_functions
 from mlc_llm.quantization.quantization import Quantization
 
+from . import d1
 from .baichuan import baichuan_loader, baichuan_model
 from .bert import bert_loader, bert_model
 from .chatglm3 import chatglm3_loader, chatglm3_model
@@ -277,6 +278,14 @@ MODELS: Dict[str, Model] = {  # noqa: UP006
             supports_ft_quant=False,
         ),
         artifact=gemma4_model.GEMMA4_ARTIFACT,
+        supports_flashinfer=False,
+    ),
+    "d1_lfm3_text": Model(
+        name="d1_lfm3_text",
+        model=d1.D1Text,
+        config=d1.D1Config,
+        source={"huggingface-safetensor": d1.huggingface},
+        quantize=make_quantization_functions(d1.D1Text, supports_ft_quant=False),
         supports_flashinfer=False,
     ),
     "embedding_gemma2_poc": Model(

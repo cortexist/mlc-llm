@@ -6,6 +6,8 @@
 
 #include <tvm/ffi/function.h>
 
+#include <map>
+
 #include "../support/nvtx.h"
 
 namespace mlc {
@@ -26,9 +28,11 @@ class PrefixCacheImpl : public PrefixCacheObj {
    * \param max_num_recycling_seqs The maximum number of sequences in prefix cache.
    * \param remove_callback The optional callback function to call when removing a sequence.
    */
-  explicit PrefixCacheImpl(size_t max_num_recycling_seqs, PrefixCacheRemoveCallback remove_callback)
+  explicit PrefixCacheImpl(size_t max_num_recycling_seqs, PrefixCacheRemoveCallback remove_callback,
+                           bool recycling_only)
       : radix_tree_(PagedRadixTree::Create()),
         max_num_recycling_seqs_(max_num_recycling_seqs),
+        recycling_only_(recycling_only),
         remove_callback_(std::move(remove_callback)) {
     recycling_seq_lrus_.clear();
     reversed_recycling_seq_lrus_.clear();
@@ -99,7 +103,8 @@ class PrefixCacheImpl : public PrefixCacheObj {
           }
         }
       }
-      if (shortest_recycling_seq_id != -1 && matched_offset > shortest_recycling_seq_length * 0.9) {
+      if (shortest_recycling_seq_id != -1 &&
+          (recycling_only_ || matched_offset > shortest_recycling_seq_length * 0.9)) {
         ReuseRecyclingSequence(shortest_recycling_seq_id);
         if (shortest_recycling_seq_length > matched_offset) {
           // Recycling sequence is longer than new sequence, rolling back the redundant trailing
@@ -127,7 +132,7 @@ class PrefixCacheImpl : public PrefixCacheObj {
           longest_forking_seq_id = matched_seq_id;
         }
       }
-      if (longest_forking_offset > 0) {
+      if (longest_forking_offset > 0 && !recycling_only_) {
         radix_tree_->ForkSequence(seq_id, longest_forking_seq_id, longest_forking_offset);
         seq_states_.emplace(seq_id, SequenceState::kActive);
         seq_sliding_window_infos_.emplace(seq_id, sliding_window_info);
@@ -302,12 +307,16 @@ class PrefixCacheImpl : public PrefixCacheObj {
    * \brief The map from LRU time stamps to sequence, used to find the sequence with earliest LRU
    * time stamp.
    */
-  std::unordered_map<size_t, int64_t> reversed_recycling_seq_lrus_;
+  // begin() must select the oldest timestamp, not an arbitrary hash-table entry.
+  std::map<size_t, int64_t> reversed_recycling_seq_lrus_;
   /*!
    * \brief The maximum number of recycling sequences in prefix cache. Set -1 as infinite prefix
    * cache.
    */
   int max_num_recycling_seqs_ = -1;
+  // Never share a prefix block with another sequence; rewind an idle sequence
+  // instead. Per-layer sliding attention is not correct across forked depths.
+  bool recycling_only_;
   /*!
    * \brief The LRU counter.
    */
@@ -426,9 +435,11 @@ class NoPrefixCache : public PrefixCacheObj {
 };
 
 PrefixCache PrefixCache::CreateRadixPrefixCache(size_t max_num_recycling_seqs,
-                                                PrefixCacheRemoveCallback remove_callback) {
+                                                PrefixCacheRemoveCallback remove_callback,
+                                                bool recycling_only) {
   ObjectPtr<PrefixCacheImpl> n =
-      tvm::ffi::make_object<PrefixCacheImpl>(max_num_recycling_seqs, std::move(remove_callback));
+      tvm::ffi::make_object<PrefixCacheImpl>(max_num_recycling_seqs, std::move(remove_callback),
+                                            recycling_only);
   return PrefixCache(std::move(n));
 }
 

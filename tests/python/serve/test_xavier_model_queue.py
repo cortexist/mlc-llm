@@ -35,7 +35,11 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
             async def send(event):
                 responses.append(event)
 
-            path = "/v1/embeddings" if model == "embeddinggemma-2" else "/v1/chat/completions"
+            path = {
+                "embeddinggemma-2": "/v1/embeddings",
+                "d1-omni-2b": "/v1/decisions",
+                "d1-systemone": "/v1/systemone",
+            }.get(model, "/v1/chat/completions")
             await app(
                 dict(
                     type="http",
@@ -51,13 +55,16 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
         first = asyncio.create_task(call("nemotron"))
         await started.wait()
         second = asyncio.create_task(call("embeddinggemma-2"))
+        third = asyncio.create_task(call("d1-omni-2b"))
+        fourth = asyncio.create_task(call("d1-systemone"))
         await asyncio.sleep(0.01)
-        self.assertEqual(queue.waiting, 1)
+        self.assertEqual(queue.waiting, 3)
+        await asyncio.wait_for(call("d1-systemone", "bad-key"), 1)
         await asyncio.wait_for(call("invalid", "bad-key"), 1)
         self.assertEqual(responses[-2]["status"], 401)
         self.assertEqual(sequence, [("nemotron", "start")])
         release.set()
-        await asyncio.gather(first, second)
+        await asyncio.gather(first, second, third, fourth)
         self.assertEqual(
             sequence,
             [
@@ -65,9 +72,13 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
                 ("nemotron", "end"),
                 ("embeddinggemma-2", "start"),
                 ("embeddinggemma-2", "end"),
+                ("d1-omni-2b", "start"),
+                ("d1-omni-2b", "end"),
+                ("d1-systemone", "start"),
+                ("d1-systemone", "end"),
             ],
         )
-        self.assertEqual(queue.completed, 2)
+        self.assertEqual(queue.completed, 4)
 
     async def test_cancelled_thread_work_retains_gpu_lock_until_finished(self):
         service = MTPChat.__new__(MTPChat)
