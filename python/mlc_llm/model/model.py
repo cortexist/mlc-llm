@@ -23,6 +23,7 @@ from .gemma import gemma_loader, gemma_model
 from .gemma2 import gemma2_loader, gemma2_model
 from .gemma3 import gemma3_loader, gemma3_model, gemma3v_loader, gemma3v_model
 from .gemma4 import embeddinggemma2, gemma4_loader, gemma4_model, gemma4_mtp, gemma4_unified
+from .gemma4 import gemma4_e4b_mtp
 from .gpt2 import gpt2_loader, gpt2_model
 from .gpt_bigcode import gpt_bigcode_loader, gpt_bigcode_model
 from .gpt_j import gpt_j_loader, gpt_j_model
@@ -304,6 +305,22 @@ MODELS: Dict[str, Model] = {  # noqa: UP006
         embedding_metadata=EmbeddingMetadata(
             model_type="encoder", pooling_strategy="mean", normalize=True
         ),
+    ),
+    "gemma4_assistant": Model(
+        name="gemma4_assistant",
+        model=gemma4_e4b_mtp.E4BAssistant,
+        config=gemma4_e4b_mtp.E4BAssistantConfig,
+        source={"huggingface-safetensor": gemma4_e4b_mtp.huggingface},
+        quantize=make_quantization_functions(gemma4_e4b_mtp.E4BAssistant, supports_ft_quant=False),
+        supports_flashinfer=False,
+    ),
+    "gemma4_e4b_mtp_target": Model(
+        name="gemma4_e4b_mtp_target",
+        model=gemma4_e4b_mtp.E4BMTPTarget,
+        config=gemma4_model.Gemma4Config,
+        source={"huggingface-safetensor": gemma4_loader.huggingface},
+        quantize=make_quantization_functions(gemma4_e4b_mtp.E4BMTPTarget, supports_ft_quant=False),
+        supports_flashinfer=False,
     ),
     "gemma4_unified_assistant": Model(
         name="gemma4_unified_assistant",

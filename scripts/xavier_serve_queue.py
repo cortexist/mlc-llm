@@ -4,6 +4,8 @@ import asyncio
 import secrets
 import time
 
+import anyio
+
 
 class GenerationQueue:
     def __init__(self):
@@ -11,6 +13,7 @@ class GenerationQueue:
         self.waiting = 0
         self.active_model = None
         self.completed = 0
+        self.drain = None
 
     def status(self):
         return dict(active_model=self.active_model, waiting=self.waiting, completed=self.completed)
@@ -67,6 +70,11 @@ class SharedGenerationQueue:
         try:
             await self.app(scope, receive, respond)
         finally:
-            self.queue.active_model = None
-            self.queue.completed += 1
-            self.queue.lock.release()
+            try:
+                if self.queue.drain is not None:
+                    with anyio.CancelScope(shield=True):
+                        await self.queue.drain()
+            finally:
+                self.queue.active_model = None
+                self.queue.completed += 1
+                self.queue.lock.release()

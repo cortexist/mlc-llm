@@ -35,8 +35,8 @@ class AssistantTextConfig(Gemma4TextConfig):
             self.num_attention_heads,
             self.num_key_value_heads,
             self.num_global_key_value_heads,
-        ) != (16, 8, 1):
-            raise ValueError("Expected the Unified 12B assistant's 16/8/1 heads")
+        ) not in ((16, 8, 1), (4, 2, 2)):
+            raise ValueError("Expected Unified 12B or E4B assistant attention heads")
         if (self.head_dim, self.global_head_dim) != (256, 512):
             raise ValueError("Expected 256/512 local/global head dimensions")
         if len(self.layer_types or []) != self.num_hidden_layers or self.rope_parameters is None:

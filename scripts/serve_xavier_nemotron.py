@@ -1,4 +1,4 @@
-"""Serve the validated Xavier Nemotron/DFlash configuration on loopback."""
+"""Serve resident Xavier Nemotron with DFlash or the Gemma E4B MTP adapter."""
 
 import asyncio
 import json
@@ -95,28 +95,41 @@ if os.environ.get("MLC_GEMMA4_MTP") == "1":
     mtp = MTPChat(root)
 embedding = None
 decision = None
-engine = AsyncMLCEngine(
-    str(root / "dist/target-16k"),
-    device="cuda",
-    model_lib=str(
-        root
-        / os.environ.get("MLC_NEMOTRON_MODEL_LIB", "dist/libs/target-dflash-dp4a-attn-16k-sm72.so")
-    ),
-    mode="interactive",
-    engine_config=EngineConfig(
-        additional_models=[
-            (str(root / "dist/draft-16k"), str(root / "dist/libs/draft-cached-tc-16k-sm72.so"))
-        ],
-        max_num_sequence=1,
-        max_total_sequence_length=int(os.environ.get("MLC_NEMOTRON_KV_BUDGET", "16384")),
-        max_single_sequence_length=16384,
-        prefill_chunk_size=512,
-        prefix_cache_mode=os.environ.get("MLC_NEMOTRON_PREFIX_CACHE", "disable"),
-        prefix_cache_max_num_recycling_seqs=int(os.environ.get("MLC_NEMOTRON_PREFIX_SLOTS", "1")),
-        speculative_mode="dflash",
-        spec_draft_length=3,
-    ),
-)
+speculative = os.environ.get("MLC_NEMOTRON_SPECULATIVE", "dflash")
+if speculative == "gemma_mtp":
+    from nemotron_mtp_service import NemotronMTP
+
+    engine = NemotronMTP(root)
+elif speculative == "dflash":
+    engine = AsyncMLCEngine(
+        str(root / "dist/target-16k"),
+        device="cuda",
+        model_lib=str(
+            root
+            / os.environ.get(
+                "MLC_NEMOTRON_MODEL_LIB", "dist/libs/target-dflash-dp4a-attn-16k-sm72.so"
+            )
+        ),
+        mode="interactive",
+        engine_config=EngineConfig(
+            additional_models=[
+                (str(root / "dist/draft-16k"), str(root / "dist/libs/draft-cached-tc-16k-sm72.so"))
+            ],
+            max_num_sequence=1,
+            max_total_sequence_length=int(os.environ.get("MLC_NEMOTRON_KV_BUDGET", "16384")),
+            max_single_sequence_length=16384,
+            prefill_chunk_size=512,
+            prefix_cache_mode=os.environ.get("MLC_NEMOTRON_PREFIX_CACHE", "disable"),
+            prefix_cache_max_num_recycling_seqs=int(
+                os.environ.get("MLC_NEMOTRON_PREFIX_SLOTS", "1")
+            ),
+            speculative_mode="dflash",
+            spec_draft_length=3,
+        ),
+    )
+else:
+    raise ValueError("MLC_NEMOTRON_SPECULATIVE must be gemma_mtp or dflash")
+
 if receipt is not None and receipt["target_caches"] != 1:
     raise RuntimeError(f"Unexpected cache installation: {receipt}")
 tool_adapter = Gemma4ToolAdapter(
@@ -135,6 +148,8 @@ if os.environ.get("MLC_NEMOTRON_SERVER_PROMPT") == "1":
 
     server_prompt = prefix_tokens(tool_adapter.tokenizer)
 queue = GenerationQueue()
+if speculative == "gemma_mtp":
+    queue.drain = engine.drain
 with ServerContext() as context:
     context.add_model("nemotron", engine)
     context.api_key = key
@@ -148,20 +163,24 @@ with ServerContext() as context:
         # Late 1 GiB NvMap allocations can fail despite ample total free RAM.
         # Use the serving event loop: MLC retains its first async loop reference.
         global embedding, decision
-        await asyncio.wait_for(
-            engine.completions.create(
-                prompt=[100] * 512, model="nemotron", max_tokens=4, temperature=0
-            ),
-            timeout=90,
-        )
-        if server_prompt is not None:
-            await engine.completions.create(
-                prompt=server_prompt,
-                model="nemotron",
-                max_tokens=1,
-                temperature=0,
-                extra_body={"debug_config": {"pinned_system_prompt": True}},
+        if speculative == "gemma_mtp":
+            await engine.warm_and_pin(server_prompt)
+        else:
+            await asyncio.wait_for(
+                engine.completions.create(
+                    prompt=[100] * 512, model="nemotron", max_tokens=4, temperature=0
+                ),
+                timeout=90,
             )
+            if server_prompt is not None:
+                await engine.completions.create(
+                    prompt=server_prompt,
+                    model="nemotron",
+                    max_tokens=1,
+                    temperature=0,
+                    extra_body={"debug_config": {"pinned_system_prompt": True}},
+                )
+        if server_prompt is not None:
             print(
                 f"Protected service prefix: {len(server_prompt)} tokens, policy {VERSION}",
                 flush=True,
@@ -279,6 +298,9 @@ with ServerContext() as context:
             + ([embedding.model_id] if embedding is not None else [])
             + ([decision.model_id] if decision is not None else []),
             "queue": queue.status(),
+            "speculative": engine.status()
+            if speculative == "gemma_mtp"
+            else {"mode": "dflash", "draft_tokens": 2},
             "service_prefix_tokens": len(server_prompt) if server_prompt else 0,
             "service_policy": VERSION if server_prompt is not None else None,
         }

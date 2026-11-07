@@ -2,14 +2,56 @@
 
 This fork runs **NVIDIA Nemotron 3.5 Bolt E4B** and **Gemma4 Unified 12B** on
 **Jetson AGX Xavier 32 GB**, using JetPack 5 / CUDA 11.4. It adds speculative
-decoding and kernels suited to Xavier's Volta GPU. Fresh November 2 measurements
-compare both engines at exactly **161 / 448 / 910 prompt tokens** below.
+decoding and kernels suited to Xavier's Volta GPU. The November 7 comparison
+runs Nemotron with **Gemma E4B MTP at 37.28 tokens/s**, versus **30.98 tokens/s**
+with Nemotron DFlash, using two draft tokens in each case.
 
 Based on upstream MLC-LLM `44fd06d0`. DFlash builds on
 [Lev Stambler's implementation](https://github.com/Lev-Stambler/mlc-llm--DFlash/tree/b6c7bf7d269fd4127fd1a48c478b01d9dc8ff42b).
 The original project overview is preserved in [README.upstream.md](README.upstream.md).
 
-## Current benchmarks — November 2, 2026
+## Nemotron with Gemma E4B MTP — November 7, 2026
+
+All rates below are **decode tokens/second** on AGX Xavier 32 GB, MAXN and
+fixed clocks. Three prompts contain exactly **60 / 68 / 90 tokens**; each has
+128 forced outputs, one warmup and two measured repetitions. Rates pool
+post-first-token outputs over decode time. MLC uses the same Nemotron
+`q4f16_1` target weights and `q0f16` assistants, one sequence, 512-token
+prefill chunks, a **1K runtime context**, and no prefix reuse.
+
+| Configuration | Prose (60) | Code (68) | Scheduling (90) | Pooled |
+|---|---:|---:|---:|---:|
+| Native MLCEngine plain | 24.90 | 24.47 | 24.15 | 24.50 |
+| Native MLCEngine DFlash, 2 drafts | 30.04 | 32.75 | 30.28 | 30.98 |
+| MTP controller plain control | 24.60 | 24.44 | 24.10 | 24.38 |
+| Gemma E4B MTP, 1 draft | 30.33 | 35.36 | 31.43 | 32.24 |
+| **Gemma E4B MTP, 2 drafts** | **33.20** | **43.07** | **36.87** | **37.28** |
+
+Two-draft MTP is **20.4% faster than DFlash** in this short-context comparison.
+The first MTP implementation measured 17.31 / 14.80 tokens/s with one / two
+drafts. Parallelizing the assistant's centroid selection reduced its step
+from **37.01 to 1.88 ms**; keeping KV, hidden states and embeddings on GPU
+removed repeated host transfers. Two-draft throughput improved **2.52×**.
+
+The optimized assistant's captured logits, hidden state and candidate IDs
+match the original exactly. All measured optimized output tokens and
+acceptance counts also match their original same-width MTP runs. Plain and
+speculative modes can still produce different greedy continuations; these
+measurements do not establish broad answer quality. The MTP controller uses
+direct TVM VMs and Python scheduling, while DFlash uses native MLCEngine.
+These short fixtures are separate from the older 161 / 448 / 910-token matrix.
+
+[Implementation and serving instructions](docs/deploy/xavier_nemotron_mtp.md)
+· [Per-run measurements and validation](docs/benchmarks/xavier/nemotron-gemma-mtp-summary.json).
+
+The selected service profile uses **Nemotron + Gemma E4B MTP with two drafts**,
+a 16K target context, a pinned server prefix and two cached conversations.
+Assistant buckets share weights across 1K/2K/4K/8K/16K contexts. Streaming,
+tool round trips, validated JSON and the resident embedding/d1 workers remain
+available through the shared GPU queue. The table above measures the separate
+1K benchmark configuration, not full-capacity serving performance.
+
+## Earlier benchmarks — November 2, 2026
 
 All rates are **tokens/second**; unqualified columns are this MLC fork.
 Each cell averages **two measured runs after one warmup**, with **128 forced
@@ -167,6 +209,9 @@ compatibility investigation; these plain rates do not include speculative decodi
   12B port with mixed local/global KV head counts and global K=V projections.
 - **Native Unified MTP prototype:** official QAT assistant conversion, shared-KV
   draft steps, greedy target verification, and an optional resident HTTP adapter.
+- **Nemotron + Gemma E4B MTP:** trained centroid-filtered vocabulary head,
+  parallel top-32 selection and GPU-resident shared state; two drafts reach
+  37.28 tok/s in the short-context comparison above.
 - **Resident model routing:** Nemotron shares one authenticated endpoint and
   FIFO GPU queue with either 12B + MTP or EmbeddingGemma 2 text embeddings;
   see the [resident switching PoC](docs/deploy/xavier_embedding_switch_poc.md).
