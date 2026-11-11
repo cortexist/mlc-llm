@@ -45,10 +45,27 @@ class ResidentDecision(ResidentEmbedding):
         )
         if self.model.context_length != self.context_length:
             raise RuntimeError("d1 library capacity mismatch")
+        self.models = {self.context_length: self.model}
         self.decide(
             "The network is down.",
             {"network": dict(type="noul", instructions="Is this a network issue?")},
         )
+        short_context = int(os.environ.get("MLC_D1_SHORT_CONTEXT", "0"))
+        if short_context:
+            if short_context not in (256, 512, 1024) or short_context >= self.context_length:
+                raise ValueError("Short d1 bucket must be smaller than the main capacity")
+            short = Program(
+                self.root / f"dist/d1-text-q0{self.precision}",
+                self.root / f"dist/libs/d1-text-{self.precision}-s{short_context}-sm72.so",
+                share_params_from=self.model,
+            )
+            if short.context_length != short_context:
+                raise RuntimeError("Short d1 library capacity mismatch")
+            self.models[short_context] = short
+            self.decide(
+                "The network is down.",
+                {"network": dict(type="noul", instructions="Is this a network issue?")},
+            )
         print(f"Resident {self.model_id} loaded once: {self.instance}", flush=True)
 
     def embedding_rows(self, ids):
@@ -70,16 +87,25 @@ class ResidentDecision(ResidentEmbedding):
     def decide(self, state, questions):
         start = time.perf_counter()
         packed = self.inputs.pack(state, questions)
-        tensors = [self.tensor(packed[k], self.device) for k in ("tokens", "mask", "groups")]
+        bucket = min(n for n in self.models if n >= packed["length"])
+        model = self.models[bucket]
+        tensors = [
+            self.tensor(np.ascontiguousarray(packed[k][:, :bucket]), self.device)
+            for k in ("tokens", "mask", "groups")
+        ]
         self.device.sync()
         begin = time.perf_counter()
-        hidden = self.model.call("prefill", *tensors).numpy()
+        hidden = model.call("prefill", *tensors).numpy()
         forward_ms = 1000 * (time.perf_counter() - begin)
         if not np.isfinite(hidden).all():
             raise RuntimeError("Nonfinite d1 backbone output")
         payload = self.inputs.read(packed, hidden, self.embedding_rows)
         payload["model"] = self.model_id
-        return payload, dict(inference_ms=forward_ms, total_ms=1000 * (time.perf_counter() - start))
+        return payload, dict(
+            inference_ms=forward_ms,
+            total_ms=1000 * (time.perf_counter() - start),
+            bucket_tokens=bucket,
+        )
 
     async def handle(self, request):
         try:
@@ -92,5 +118,6 @@ class ResidentDecision(ResidentEmbedding):
                 "X-Xavier-Decision-Inference-Ms": str(metrics["inference_ms"]),
                 "X-Xavier-Decision-Total-Ms": str(metrics["total_ms"]),
                 "X-Xavier-Decision-Instance": self.instance,
+                "X-Xavier-Decision-Bucket-Tokens": str(metrics["bucket_tokens"]),
             },
         )

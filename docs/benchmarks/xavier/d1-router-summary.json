@@ -1,0 +1,157 @@
+{
+  "date": "2026-11-03",
+  "device": "Jetson AGX Xavier 32 GB, JetPack 5.1.8, CUDA 11.4, sm_72",
+  "model": "LiquidAI/d1-Omni-2B text backbone, q0f16",
+  "protocol": {
+    "validation_questions": 32,
+    "development_questions": 30,
+    "validation_kind": "Separate same-author synthetic questions; prompt and policy frozen before this set",
+    "primary_context_tokens": 2048,
+    "short_bucket_tokens": 256,
+    "params_shared": true,
+    "router_classes": [
+      "workspace",
+      "inventory",
+      "general",
+      "action"
+    ],
+    "general_local_evidence_threshold": 0.15,
+    "request_only_routing": true,
+    "current_conversation_cache_untouched": true
+  },
+  "accuracy": {
+    "old_keyword_gate": 16,
+    "d1_top_choice": 30,
+    "d1_conservative_policy": 31,
+    "known_miss": "Past RAM measurement routed to live inventory rather than workspace records"
+  },
+  "development": {
+    "three_choice_correct": 27,
+    "two_boolean_correct": 18,
+    "four_intent_top_choice_correct": 28,
+    "cases": 30
+  },
+  "latency": {
+    "https_median_ms": 299.8270099997171,
+    "https_min_ms": 295.4305609964649,
+    "https_max_ms": 427.7350030024536,
+    "all_validation_used_short_bucket": true,
+    "client_cache_repeat_ms": 0.0176789999999869
+  },
+  "bucket_validation": {
+    "params_shared": true,
+    "rows": [
+      {
+        "input_tokens": 194,
+        "cosine": 0.9999975087939661,
+        "probability_drift": 2.479086045981127e-05,
+        "old": {
+          "inference_ms": 2475.2569990087068,
+          "total_ms": 2518.1594569876324,
+          "bucket_tokens": 2048
+        },
+        "short": {
+          "inference_ms": 276.13718999782577,
+          "total_ms": 280.83078500640113,
+          "bucket_tokens": 256
+        },
+        "choice": "workspace"
+      },
+      {
+        "input_tokens": 187,
+        "cosine": 0.9999971082568745,
+        "probability_drift": 0.0016664240199177338,
+        "old": {
+          "inference_ms": 2455.676493002102,
+          "total_ms": 2463.5615980078,
+          "bucket_tokens": 2048
+        },
+        "short": {
+          "inference_ms": 275.73239798948634,
+          "total_ms": 280.7991310110083,
+          "bucket_tokens": 256
+        },
+        "choice": "inventory"
+      }
+    ],
+    "long_request": {
+      "usage": {
+        "input_tokens": 536,
+        "output_tokens": 0
+      },
+      "metrics": {
+        "inference_ms": 2467.2963459888706,
+        "total_ms": 2477.843209009734,
+        "bucket_tokens": 2048
+      }
+    }
+  },
+  "cache_preservation": {
+    "before_s": 1.4424852489974,
+    "after_s": 0.4869376229980844,
+    "prompt_tokens": 724,
+    "cached_tokens": 723,
+    "text_equal": true
+  },
+  "short_mail_compatibility": [
+    {
+      "name": "no-reply",
+      "max_probability_drift": 0.0003086285372698727,
+      "seconds": 0.3031671619974077,
+      "observed_verdicts_match": true
+    },
+    {
+      "name": "human",
+      "max_probability_drift": 0.0007658054524215252,
+      "seconds": 0.3039496830024291,
+      "observed_verdicts_match": true
+    },
+    {
+      "name": "support-inbox",
+      "max_probability_drift": 1.4512131553838514e-05,
+      "seconds": 0.3026063939978485,
+      "observed_verdicts_match": true
+    },
+    {
+      "name": "automated-but-monitored",
+      "max_probability_drift": 2.12483334069008e-05,
+      "seconds": 0.30296793500019703,
+      "observed_verdicts_match": true
+    },
+    {
+      "name": "related-reference",
+      "max_probability_drift": 6.186575918765147e-05,
+      "seconds": 0.30215154200413963,
+      "observed_verdicts_match": true
+    },
+    {
+      "name": "unrelated-reference",
+      "max_probability_drift": 8.252150044792128e-05,
+      "seconds": 0.29844860700541176,
+      "observed_verdicts_match": true
+    }
+  ],
+  "cpu_tests": {
+    "parameter_sharing": 2,
+    "node_router": 3,
+    "workspace_helper_regressions": 8,
+    "table_extraction_boundaries": 4
+  },
+  "limitations": [
+    "Small authored validation set, not independent production accuracy",
+    "One retained routing failure",
+    "Threshold selected on development questions",
+    "Scores are not guaranteed correctness probabilities",
+    "Long or queued requests cost more than median",
+    "Retrieved excerpt selection and synthesis remain separate quality limitations",
+    "Component timing is not end-to-end workspace-search latency"
+  ],
+  "ram_misroute_end_to_end": {
+    "completed": true,
+    "duration_seconds": 4.143997629995283,
+    "recovered_with_workspace_search": false,
+    "model_tool_calls": [],
+    "server_prompt_changed": false,
+    "outcome": "Finished normally but did not answer the RAM question; recognized missing evidence and stopped."
+  }
+}

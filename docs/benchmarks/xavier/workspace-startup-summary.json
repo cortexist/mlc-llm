@@ -1,0 +1,146 @@
+{
+  "date": "2026-11-02",
+  "device": "Jetson AGX Xavier 32 GB",
+  "model": "NVIDIA Nemotron 3.5 Bolt E4B",
+  "launch_directory": "~/Workspaces",
+  "cause": "Workspace-root AGENTS.md loaded a large chronological device log into every fresh client system prompt. Earlier timing tests launched from ~/.pi/agent and missed this context.",
+  "before": {
+    "agents_bytes": 39114,
+    "exact_question_prompt_tokens": 15599,
+    "client_system_tokens": 12726,
+    "requested_max_output_tokens": 2048,
+    "context_limit": 16384,
+    "user_cancelled_after_seconds": [
+      75.169,
+      50.62
+    ],
+    "completed_answer_observed": false
+  },
+  "after": {
+    "agents_bytes": 1802,
+    "exact_question_prompt_tokens": 4400,
+    "full_notes_preserved": true,
+    "server_changes_required": false,
+    "service_prefix_tokens": 342
+  },
+  "trials": {
+    "exact_user_then_mixed_history": [
+      {
+        "turn": 1,
+        "question": "What are the prefill and decoding rates of little gemma v2 running Nemotron 3.5 Bolt E4B on Xavier AGX?",
+        "seconds": 23.938006794080138,
+        "prompt_tokens": 4400,
+        "new_prefill_tokens": 3467,
+        "cached_tokens": 933,
+        "output_tokens": 140,
+        "model_tool_calls": []
+      },
+      {
+        "turn": 2,
+        "question": "What's the capital city of France?",
+        "seconds": 0.7480225950712338,
+        "prompt_tokens": 4558,
+        "new_prefill_tokens": 19,
+        "cached_tokens": 4539,
+        "output_tokens": 4,
+        "model_tool_calls": []
+      },
+      {
+        "turn": 3,
+        "question": "What's the prefill and decoding rate of our mlc-llm fork for Nemotron 3.5 Bolt E4B on Xavier AGX?",
+        "seconds": 20.900976322009228,
+        "prompt_tokens": 6049,
+        "new_prefill_tokens": 1488,
+        "cached_tokens": 4561,
+        "output_tokens": 204,
+        "model_tool_calls": []
+      },
+      {
+        "turn": 4,
+        "question": "What's the capital city of France?",
+        "seconds": 0.7478698570048437,
+        "prompt_tokens": 6270,
+        "new_prefill_tokens": 18,
+        "cached_tokens": 6252,
+        "output_tokens": 4,
+        "model_tool_calls": []
+      }
+    ],
+    "fresh_nemotron_warm_cache": [
+      {
+        "turn": 1,
+        "question": "What's the prefill and decoding rate of our mlc-llm fork for Nemotron 3.5 Bolt E4B on Xavier AGX?",
+        "seconds": 19.601961512002163,
+        "prompt_tokens": 4536,
+        "new_prefill_tokens": 1483,
+        "cached_tokens": 3053,
+        "output_tokens": 236,
+        "model_tool_calls": []
+      },
+      {
+        "turn": 2,
+        "question": "What's the capital city of France?",
+        "seconds": 0.6848529229173437,
+        "prompt_tokens": 4790,
+        "new_prefill_tokens": 19,
+        "cached_tokens": 4771,
+        "output_tokens": 4,
+        "model_tool_calls": []
+      },
+      {
+        "turn": 3,
+        "question": "How to undo add . in git?",
+        "seconds": 1.5074242249829695,
+        "prompt_tokens": 4810,
+        "new_prefill_tokens": 17,
+        "cached_tokens": 4793,
+        "output_tokens": 18,
+        "model_tool_calls": []
+      }
+    ],
+    "fresh_nemotron_cold_conversation": [
+      {
+        "turn": 1,
+        "question": "What's the prefill and decoding rate of our mlc-llm fork for Nemotron 3.5 Bolt E4B on Xavier AGX?",
+        "seconds": 27.430180673021823,
+        "prompt_tokens": 4536,
+        "new_prefill_tokens": 4194,
+        "cached_tokens": 342,
+        "output_tokens": 178,
+        "model_tool_calls": []
+      },
+      {
+        "turn": 2,
+        "question": "What's the capital city of France?",
+        "seconds": 0.6833264849847183,
+        "prompt_tokens": 4732,
+        "new_prefill_tokens": 19,
+        "cached_tokens": 4713,
+        "output_tokens": 4,
+        "model_tool_calls": []
+      },
+      {
+        "turn": 3,
+        "question": "How to undo add . in git?",
+        "seconds": 1.3221676810644567,
+        "prompt_tokens": 4752,
+        "new_prefill_tokens": 17,
+        "cached_tokens": 4735,
+        "output_tokens": 18,
+        "model_tool_calls": []
+      }
+    ]
+  },
+  "limitations": [
+    "Individual latency samples, not medians",
+    "Cold-conversation test retains warm resident weights and only the pinned service prefix",
+    "The original question mixes little-gemma V2 with Nemotron on Xavier; its answer quoted explicitly labelled Orin data, which does not establish the requested pairing",
+    "In the first mixed-history conversation, the later Nemotron answer mislabelled the 448-token row as 161 tokens; both fresh Nemotron runs returned the correct full table",
+    "Prompt size still depends on other client instructions, tool schemas and history"
+  ],
+  "validation": {
+    "fresh_nemotron_table_rows_correct": true,
+    "cold_conversation_shared_prefix_only": true,
+    "archived_notes_original_sha256": "45caf85fdf189a67ef91b2a851fd309fcee8569caf82bf42a6a8aa13ffdd6e0b"
+  }
+}

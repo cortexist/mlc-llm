@@ -174,8 +174,9 @@ MLC_D1_PRECISION=f16 MLC_D1_CONTEXT=2048 \
 This writes `dist/d1-text-config-f16-s2048/mlc-chat-config.json` and
 `dist/libs/d1-text-f16-s2048-sm72.so`. It preserves the 256-token config/library.
 The serving worker loads the existing `dist/d1-text-q0f16` weights and checks
-the selected library's capacity. All inputs execute the fixed padded bucket;
-a short request also pays for 2048 positions. Set `MLC_D1_CONTEXT=256` and
+the selected library's capacity. Without a short-bucket profile, all inputs execute the fixed padded bucket;
+a short request also pays for 2048 positions. The optional shared-weight profile
+below avoids that cost for small requests. Set `MLC_D1_CONTEXT=256` and
 restart to restore the earlier latency/capacity tradeoff.
 
 For agentic-mail, configure its decision API root to
@@ -229,3 +230,31 @@ this is not a peak-memory or sustained-stability qualification.
 [Summary](../benchmarks/xavier/d1-systemone-summary.json),
 [raw HTTP results](../benchmarks/xavier/d1-systemone-results.json), and
 [synthetic cases](../benchmarks/xavier/d1-systemone-cases.json).
+
+
+## Optional shared-weight short-input bucket
+
+When both 256- and 2048-token FP16 libraries are built from the same checkpoint,
+`MLC_D1_SHORT_CONTEXT=256` enables the smaller library for requests whose complete
+native packing fits 256 tokens. The public input capacity remains 2048; larger
+requests continue using the main library. Install
+[`d1-short.conf`](../../deploy/xavier/d1-short.conf) as a service drop-in, reload
+systemd and restart. Remove that drop-in and restart to restore the fixed bucket.
+
+The two VMs share one parameter array. Exact parameter metadata (names, order,
+shapes, dtype and other recorded attributes) must match before sharing. Both
+buckets warm sequentially at startup, with the main bucket first. No weight
+conversion or model-library rebuild is needed when both artifacts already exist.
+`X-Xavier-Decision-Bucket-Tokens` reports the bucket actually used.
+
+Two short actual-checkpoint comparisons between the buckets had hidden-state
+cosines at least 0.9999971 and maximum decision-probability drift 0.001667.
+Their decisions agreed. Short execution was about 281 ms versus 2.46–2.52 s
+for the 2K bucket. A 536-token request selected the main bucket. Six existing
+short synthetic mail cases retained their thresholded verdicts, with maximum
+probability drift below 0.000766. Floating-point results can differ between
+buckets; these checks do not establish general decision equivalence.
+
+The optional [Pi evidence-router example](xavier_pi_evidence_router.md) uses this
+fast path to classify where a question's evidence should come from, without
+starting a Nemotron generation or using one of its cached conversation entries.
