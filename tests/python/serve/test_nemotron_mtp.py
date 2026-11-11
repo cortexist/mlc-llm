@@ -75,15 +75,14 @@ class Boundaries(unittest.TestCase):
             self.assertEqual(list(trial.entries), expected)
             self.assertEqual(trial.pinned["sid"], 1)
 
-    def test_tail_pruning_runs_the_whole_model_only_where_a_token_is_predicted(self):
+    def test_kv_only_prefill_runs_the_whole_model_only_where_a_token_is_predicted(self):
         prompt = [2] * 1200
         for mode, kv_only, whole in [
-            (None, [], [(512, True), (512, True), (176, True)]),
-            ("chunks", [512, 512], [(176, True)]),
-            ("all", [512, 512, 175], [(1, False)]),
+            (False, [], [(512, True), (512, True), (176, True)]),
+            (True, [512, 512, 175], [(1, False)]),
         ]:
             trial = CachedTrial.__new__(CachedTrial)
-            trial.tail_pruning = mode
+            trial.kv_only_prefill = mode
             trial.pinned, trial.entries = None, OrderedDict()
             trial.budget, trial.next_sid, trial.cache, trial.hidden = 32768, 12, None, None
             trial.builtin = lambda name: lambda *args: None

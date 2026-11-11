@@ -16,10 +16,10 @@ def common_prefix(left, right, limit):
 
 
 class CachedTrial(Trial):
-    # Prompt tokens that are not predicted from run the K/V layers only (mtp_prefill_kv):
-    # "chunks" keeps the last chunk on the full prefill path, so outputs do not change;
-    # "all" leaves only the last token, which then takes the decode path.
-    tail_pruning = None
+    # Only the last prompt token is predicted from. With this set, the others run
+    # the layers that store K/V only (mtp_prefill_kv), and the last one a
+    # one-row verification step.
+    kv_only_prefill = False
 
     def __init__(
         self, target, assistant, short_assistant, runtime_library, budget=32768, assistants=None
@@ -140,7 +140,7 @@ class CachedTrial(Trial):
         else:
             self.builtin("add_sequence")(self.cache, self.sid)
         self.committed = reuse
-        if self.tail_pruning == "all":
+        if self.kv_only_prefill:
             for offset in range(reuse, len(prompt) - 1, 512):
                 chunk = prompt[offset : min(offset + 512, len(prompt) - 1)]
                 self.append(self.fill(chunk), offset, len(chunk))
@@ -150,13 +150,9 @@ class CachedTrial(Trial):
             self.committed += 1
             self.copy(self.hidden, hidden, 5120)
             return self.argmax(logits)[0], reuse
-        offsets = range(reuse, len(prompt), 512)
-        for offset in offsets:
+        for offset in range(reuse, len(prompt), 512):
             chunk = prompt[offset : offset + 512]
-            if self.tail_pruning and offset != offsets[-1]:
-                delta = self.fill(chunk)
-            else:
-                logits, hidden, *delta = self.forward(chunk, True)
+            logits, hidden, *delta = self.forward(chunk, True)
             self.append(delta, offset, len(chunk))
             self.committed += len(chunk)
         self.copy(self.hidden, hidden, 5120, source_offset=(len(chunk) - 1) * 5120)
@@ -169,7 +165,7 @@ class CachedTrial(Trial):
         self.builtin("add_sequence")(self.cache, self.sid)
         for offset in range(0, len(prompt), 512):
             chunk = prompt[offset : offset + 512]
-            delta = self.fill(chunk) if self.tail_pruning else self.forward(chunk, True)[2:]
+            delta = self.fill(chunk) if self.kv_only_prefill else self.forward(chunk, True)[2:]
             self.append(delta, offset, len(chunk))
         self.snapshot(prompt, pinned=True)
         self.device.sync()

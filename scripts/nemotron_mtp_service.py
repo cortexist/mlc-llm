@@ -4,7 +4,7 @@ Libraries are named under dist/libs. By default: the target, and assistants
 compiled for 1K to 16K contexts. Options, all for libraries built to match:
 
 MLC_NEMOTRON_MTP_TARGET        target library
-MLC_NEMOTRON_MTP_TAIL_PRUNING  chunks or all: the target has mtp_prefill_kv (see CachedTrial)
+MLC_NEMOTRON_MTP_KV_PREFILL    1: K/V-only prefill, the target has mtp_prefill_kv (see CachedTrial)
 MLC_NEMOTRON_MTP_ASSISTANT     one assistant that attends the valid context only
 """
 
@@ -83,9 +83,10 @@ class NemotronMTP:
             int(option("MLC_NEMOTRON_KV_BUDGET", "32768")),
             buckets,
         )
-        self.trial.tail_pruning = option("MLC_NEMOTRON_MTP_TAIL_PRUNING")
-        if self.trial.tail_pruning not in (None, "chunks", "all"):
-            raise ValueError("MLC_NEMOTRON_MTP_TAIL_PRUNING must be chunks or all")
+        kv_only = option("MLC_NEMOTRON_MTP_KV_PREFILL", "0")
+        if kv_only not in ("0", "1"):
+            raise ValueError("MLC_NEMOTRON_MTP_KV_PREFILL must be 0 or 1")
+        self.trial.kv_only_prefill = kv_only == "1"
         if self.trial.context_length != self.context_length:
             raise RuntimeError("Nemotron MTP libraries must support 16K context")
         self.tokenizer = Tokenizer(str(self.root / "dist/target-16k"))

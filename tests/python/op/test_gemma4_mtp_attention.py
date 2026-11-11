@@ -78,7 +78,9 @@ for name, dim, window in (("local", 256, 512), ("full", 512, 0)):
             {
                 "function": name,
                 "length": n,
-                "bit_equal": round(float((output.view("uint16") == expected.view("uint16")).mean()), 4),
+                "bit_equal": round(
+                    float((output.view("uint16") == expected.view("uint16")).mean()), 4
+                ),
                 "max_error": float(error.max()),
             },
             flush=True,
