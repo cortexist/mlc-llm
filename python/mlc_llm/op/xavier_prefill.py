@@ -112,10 +112,13 @@ def build_tir(variant):
 
 def install(variant, target_config=None):
     """Intercept cache construction once; all per-layer callbacks remain native."""
-    assert variant in ("bounds", "width", "wmma", "hybrid", "hybrid-width", "paged")
+    names = ("bounds", "width", "wmma", "hybrid", "hybrid-width", "paged", "paged-prefill")
+    assert variant in names
     native = tvm_ffi.load_module(str(ROOT / "dist/prefill-experiments/native.so"))
     # "paged": hybrid-width for the current chunk, tensor cores over the cached pages.
-    paged = variant == "paged"
+    # "paged-prefill": the same for chunks of more than four rows only, so that
+    # decode and verification keep the arithmetic of hybrid-width.
+    paged = variant if variant.startswith("paged") else None
     if paged:
         variant = "hybrid-width"
     hybrid = variant in ("hybrid", "hybrid-width")
@@ -127,7 +130,7 @@ def install(variant, target_config=None):
     )
     key = "vm.builtin.paged_attention_kv_cache_create"
     original = tvm_ffi.get_global_func(key)
-    receipt = {"variant": "paged" if paged else variant, "target_caches": 0}
+    receipt = {"variant": paged or variant, "target_caches": 0}
     if variant == "hybrid-width":
         path = Path(target_config or ROOT / "dist/target-16k/mlc-chat-config.json")
         config = json.loads(path.read_text())["model_config"]["text_config"]
@@ -157,6 +160,7 @@ def install(variant, target_config=None):
             if variant == "hybrid-width":
                 assert tuple(map(int, args[1])) == (0, physical_layers)
                 assert int(args[0][2]) <= config["sliding_window"] == 512
+            before = list(args)
             for index, name in ((15, "ragged"), (16, "paged0"), (18, "paged1")):
                 old = args[index]
                 assert len(old) == 2 and str(old[0]) == "tirx"
@@ -167,10 +171,12 @@ def install(variant, target_config=None):
                 wrapped = native["wrap_prefill"](old[1], candidate, clear, 7 if index == 15 else 8)
                 args[index] = tvm_ffi.convert([old[0], wrapped])
             # Global and local, prefill and decode: every call over the cached pages.
-            for index in (16, 17, 18, 19) if paged else ():
+            for index in {"paged": (16, 17, 18, 19), "paged-prefill": (16, 18)}.get(paged, ()):
                 old = args[index]
                 assert len(old) == 2 and str(old[0]) == "tirx"
                 wrapped = native["wrap_paged"](old[1], int(index >= 18), index % 2)
+                if paged == "paged-prefill":
+                    wrapped = native["wrap_prefill"](before[index][1], wrapped, 0, 8)
                 args[index] = tvm_ffi.convert([old[0], wrapped])
             receipt["target_caches"] += 1
             print("Prefill experiment installed:", receipt, flush=True)
