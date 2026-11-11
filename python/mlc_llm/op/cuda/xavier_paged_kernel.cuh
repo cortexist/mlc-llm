@@ -4,7 +4,13 @@
 // A block takes the queries of up to 4*T rows for one K/V head, whose four query
 // heads share K and V, and one segment of the keys. It reads the pages in place,
 // 16 keys per tile: K twice (row maxima, then probabilities) and V once. Nothing
-// is rescaled along the way; `merge` joins the segments by their maxima.
+// is rescaled along the way. A block that has all the keys writes the result;
+// otherwise `merge` joins the segments by their maxima.
+//
+// Probabilities enter the value product as FP16. A step that is predicted from
+// (T = 1: decode or verification) keeps two FP16 terms of each, 22 bits, which
+// puts their rounding far below that of the FP16 result; a prefill chunk
+// (T = 2) keeps one.
 #include <cuda_fp16.h>
 #include <math_constants.h>
 #include <mma.h>
@@ -22,7 +28,9 @@ struct Job {
   const half* pages;    // [page, K or V, 2, 16, 512]
   const int* page_ids;  // pages of the sequence, oldest first
   const int* length;    // keys in the last page; local: then window offset and sink
-  float* partial;       // [block, query, D] unnormalized outputs
+  half* output;         // [rows, 8, 512]
+  float* lse;           // [rows, 8] base-2 log-sum-exp
+  float* partial;       // [block, query, D] unnormalized outputs of a segment
   float* stat;          // [block, maximum or denominator, query]
   int rows, pages_count, segment_pages, segments, causal;
   float scale;
@@ -63,11 +71,12 @@ __device__ __forceinline__ void fold(const Tile& tile, float* scratch, float* ou
 
 template <int T, bool Local>
 __global__ void attend(Job job) {
-  constexpr int D = Local ? 256 : 512, Q = 16 * T, F = D * T / (Warps * 16);
+  constexpr int D = Local ? 256 : 512, Q = 16 * T, F = D * T / (Warps * 16), Terms = 3 - T;
   __shared__ __align__(32) half queries[Q * D];           // later the V of a partial last page
-  __shared__ __align__(32) half weight[Warps * 2 * 256];  // [page of the step][tile][query][key]
+  // [page of the step][tile, or term of the one tile][query][key]
+  __shared__ __align__(32) half weight[Warps * 2 * 256];
   __shared__ float reduced[Warps][Q];
-  __shared__ float top[Q];
+  __shared__ float top[Q], total[Q];
   int t = threadIdx.x, warp = t / 32, lane = t % 32, head = blockIdx.y;
   int group = blockIdx.x / job.segments, segment = blockIdx.x % job.segments;
   // A warp's two weight tiles double as its scratch outside the key loop.
@@ -164,13 +173,16 @@ __global__ void attend(Job job) {
 #pragma unroll
   for (int f = 0; f < F; ++f) wmma::fill_fragment(out[f], 0.f);
   auto values = [&](int w, const half* v, int stride) {
-    wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> a;
-    wmma::load_matrix_sync(a, weight + (w * 2 + mine) * 256, 16);
+    wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> a[Terms];
+#pragma unroll
+    for (int term = 0; term < Terms; ++term)
+      wmma::load_matrix_sync(a[term], weight + (w * 2 + mine + term) * 256, 16);
 #pragma unroll
     for (int f = 0; f < F; ++f) {
       wmma::fragment<wmma::matrix_b, 16, 16, 16, half, wmma::row_major> b;
       wmma::load_matrix_sync(b, v + dim + f * 16, stride);
-      wmma::mma_sync(out[f], a, b, out[f]);
+#pragma unroll
+      for (int term = 0; term < Terms; ++term) wmma::mma_sync(out[f], a[term], b, out[f]);
     }
   };
   for (int base = first; base < end; base += Warps) {
@@ -184,7 +196,10 @@ __global__ void attend(Job job) {
                         ? exp2f(s[tile].x[i] * scale - best[tile].x[i])
                         : 0.f;
           sum[tile].x[i] += p;
-          weight[(warp * 2 + tile) * 256 + at[i]] = __float2half_rn(p);
+          half leading = __float2half_rn(p);
+          weight[(warp * 2 + tile) * 256 + at[i]] = leading;
+          if constexpr (Terms == 2)
+            weight[(warp * 2 + 1) * 256 + at[i]] = __float2half_rn(p - __half2float(leading));
         }
     }
     __syncthreads();
@@ -206,23 +221,52 @@ __global__ void attend(Job job) {
 #pragma unroll
   for (int tile = 0; tile < T; ++tile) fold(sum[tile], scratch, reduced[warp] + tile * 16, false);
   __syncthreads();
-  int block = blockIdx.y * gridDim.x + blockIdx.x;
   if (t < Q) {
     float v = 0;
     for (int w = 0; w < Warps; ++w) v += reduced[w][t];
-    job.stat[(block * 2) * Q + t] = top[t];
-    job.stat[(block * 2 + 1) * Q + t] = v;
+    total[t] = v;
   }
-  float* partial = job.partial + ((int64_t)block * Q + mine * 16) * D + dim;
+  __syncthreads();
+  if (job.segments > 1) {
+    int block = blockIdx.y * gridDim.x + blockIdx.x;
+    if (t < Q) {
+      job.stat[(block * 2) * Q + t] = top[t];
+      job.stat[(block * 2 + 1) * Q + t] = total[t];
+    }
+    float* partial = job.partial + ((int64_t)block * Q + mine * 16) * D + dim;
+#pragma unroll
+    for (int f = 0; f < F; ++f)
+      wmma::store_matrix_sync(partial + f * 16, out[f], D, wmma::mem_row_major);
+    return;
+  }
+  // Query `query` of this block, or null for the padding of the last group.
+  auto result = [&](int query) -> half* {
+    int row = group * 4 * T + query / 4;
+    return row < job.rows ? job.output + ((int64_t)row * 8 + head * 4 + query % 4) * Stride
+                          : nullptr;
+  };
 #pragma unroll
   for (int f = 0; f < F; ++f)
-    wmma::store_matrix_sync(partial + f * 16, out[f], D, wmma::mem_row_major);
+#pragma unroll
+    for (int i = 0; i < E; ++i) {
+      int query = mine * 16 + at[i] / 16;
+      if (half* o = result(query))
+        o[dim + f * 16 + at[i] % 16] =
+            __float2half_rn(total[query] > 0 ? out[f].x[i] / total[query] : 0.f);
+    }
+  if constexpr (Local) {
+    for (int i = t; i < Q * 256; i += 256)
+      if (half* o = result(i / 256)) o[256 + i % 256] = __float2half(0.f);
+  }
+  if (t < Q && result(t))
+    job.lse[(group * 4 * T + t / 4) * 8 + head * 4 + t % 4] =
+        total[t] > 0 ? top[t] + log2f(total[t]) : -50000.f;
 }
 
 // One block per query: join its segments and normalize. A query that attends
 // no key gets zero output and the empty log-sum-exp, as the TIR kernels give.
 template <int T, bool Local>
-__global__ void merge(Job job, half* output, float* lse, int blocks) {
+__global__ void merge(Job job, int blocks) {
   constexpr int D = Local ? 256 : 512, Q = 16 * T;
   int row = blockIdx.x, head = blockIdx.y, t = threadIdx.x;
   int query = row % (4 * T) * 4 + head % 4;
@@ -238,9 +282,9 @@ __global__ void merge(Job job, half* output, float* lse, int blocks) {
     low += weight * partial[t];
     if constexpr (D == 512) high += weight * partial[t + 256];
   }
-  half* o = output + ((int64_t)row * 8 + head) * Stride;
+  half* o = job.output + ((int64_t)row * 8 + head) * Stride;
   o[t] = __float2half_rn(sum > 0 ? low / sum : 0.f);
   o[t + 256] = __float2half_rn(sum > 0 ? high / sum : 0.f);
-  if (t == 0) lse[row * 8 + head] = sum > 0 ? top + log2f(sum) : -50000.f;
+  if (t == 0) job.lse[row * 8 + head] = sum > 0 ? top + log2f(sum) : -50000.f;
 }
 }  // namespace xavier_paged

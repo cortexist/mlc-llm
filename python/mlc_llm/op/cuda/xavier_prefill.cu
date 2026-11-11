@@ -117,11 +117,11 @@ float* paged_scratch() {
   return memory;
 }
 template <int T, bool Local>
-void launch_paged(const xavier_paged::Job& job, int groups, half* output, float* lse,
-                  cudaStream_t stream) {
+void launch_paged(const xavier_paged::Job& job, int groups, cudaStream_t stream) {
   dim3 grid(groups * job.segments, 2);
   xavier_paged::attend<T, Local><<<grid, 256, 0, stream>>>(job);
-  xavier_paged::merge<T, Local><<<dim3(job.rows, 8), 256, 0, stream>>>(job, output, lse, grid.x);
+  if (job.segments > 1)
+    xavier_paged::merge<T, Local><<<dim3(job.rows, 8), 256, 0, stream>>>(job, grid.x);
 }
 // False when the call is not one sequence of the padded FP16 E4B cache.
 bool paged(bool local, DLTensor* q, DLTensor* pages, DLTensor* page_ptr, DLTensor* page_ids,
@@ -143,6 +143,8 @@ bool paged(bool local, DLTensor* q, DLTensor* pages, DLTensor* page_ptr, DLTenso
                         static_cast<half*>(tensor_data(pages)),
                         static_cast<int*>(tensor_data(page_ids)),
                         static_cast<int*>(tensor_data(length)),
+                        static_cast<half*>(tensor_data(output)),
+                        static_cast<float*>(tensor_data(lse)),
                         scratch,
                         scratch + MaxBlocks * 32 * 512,
                         rows,
@@ -152,12 +154,10 @@ bool paged(bool local, DLTensor* q, DLTensor* pages, DLTensor* page_ptr, DLTenso
                         static_cast<int>(causal),
                         static_cast<float>(scale)};
   auto stream = static_cast<cudaStream_t>(TVMFFIEnvGetStream(kDLCUDA, q->device.device_id));
-  auto* o = static_cast<half*>(tensor_data(output));
-  auto* l = static_cast<float*>(tensor_data(lse));
-  if (tiles == 1 && local) launch_paged<1, true>(job, groups, o, l, stream);
-  if (tiles == 1 && !local) launch_paged<1, false>(job, groups, o, l, stream);
-  if (tiles == 2 && local) launch_paged<2, true>(job, groups, o, l, stream);
-  if (tiles == 2 && !local) launch_paged<2, false>(job, groups, o, l, stream);
+  if (tiles == 1 && local) launch_paged<1, true>(job, groups, stream);
+  if (tiles == 1 && !local) launch_paged<1, false>(job, groups, stream);
+  if (tiles == 2 && local) launch_paged<2, true>(job, groups, stream);
+  if (tiles == 2 && !local) launch_paged<2, false>(job, groups, stream);
   auto status = cudaGetLastError();
   if (status != cudaSuccess) throw std::runtime_error(cudaGetErrorString(status));
   return true;
