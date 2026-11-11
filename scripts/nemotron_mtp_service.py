@@ -1,4 +1,12 @@
-"""OpenAI engine adapter for resident Nemotron with two Gemma E4B MTP drafts."""
+"""OpenAI engine adapter for resident Nemotron with two Gemma E4B MTP drafts.
+
+Libraries are named under dist/libs. By default: the target, and assistants
+compiled for 1K to 16K contexts. Options, all for libraries built to match:
+
+MLC_NEMOTRON_MTP_TARGET        target library
+MLC_NEMOTRON_MTP_TAIL_PRUNING  chunks or all: the target has mtp_prefill_kv (see CachedTrial)
+MLC_NEMOTRON_MTP_ASSISTANT     one assistant that attends the valid context only
+"""
 
 import asyncio
 import json
@@ -42,35 +50,42 @@ class NemotronMTP:
         from mtp_program import Program
         from nemotron_mtp_cache import CachedTrial
 
+        libs, option = self.root / "dist/libs", os.environ.get
         target = Program(
             self.root / "dist/nemotron-e4b-mtp-16k",
-            self.root / "dist/libs/nemotron-e4b-mtp-target-16k-sm72.so",
+            libs / option("MLC_NEMOTRON_MTP_TARGET", "nemotron-e4b-mtp-target-16k-sm72.so"),
         )
+        single = option("MLC_NEMOTRON_MTP_ASSISTANT")
         assistant = Program(
             self.root / "dist/gemma4-e4b-mtp-assistant-16k",
-            self.root / "dist/libs/gemma4-e4b-mtp-assistant-topk-16k-sm72.so",
+            libs / (single or "gemma4-e4b-mtp-assistant-topk-16k-sm72.so"),
         )
-        short = Program(
-            Path.home() / "Models/gemma-4-E4B-IT-assistant-q0f16-MLC",
-            self.root / "dist/libs/gemma4-e4b-mtp-assistant-topk-1k-sm72.so",
-            share_params_from=assistant,
-        )
-        buckets = {
-            size: Program(
-                self.root / f"dist/gemma4-e4b-mtp-assistant-{size // 1024}k",
-                self.root / f"dist/libs/gemma4-e4b-mtp-assistant-topk-{size // 1024}k-sm72.so",
+        short, buckets = None, {}
+        if not single:
+            short = Program(
+                Path.home() / "Models/gemma-4-E4B-IT-assistant-q0f16-MLC",
+                libs / "gemma4-e4b-mtp-assistant-topk-1k-sm72.so",
                 share_params_from=assistant,
             )
-            for size in [2048, 4096, 8192]
-        }
+            buckets = {
+                size: Program(
+                    self.root / f"dist/gemma4-e4b-mtp-assistant-{size // 1024}k",
+                    libs / f"gemma4-e4b-mtp-assistant-topk-{size // 1024}k-sm72.so",
+                    share_params_from=assistant,
+                )
+                for size in [2048, 4096, 8192]
+            }
         self.trial = CachedTrial(
             target,
             assistant,
             short,
-            self.root / "dist/libs/xavier-mtp-runtime.so",
-            int(os.environ.get("MLC_NEMOTRON_KV_BUDGET", "32768")),
+            libs / "xavier-mtp-runtime.so",
+            int(option("MLC_NEMOTRON_KV_BUDGET", "32768")),
             buckets,
         )
+        self.trial.tail_pruning = option("MLC_NEMOTRON_MTP_TAIL_PRUNING")
+        if self.trial.tail_pruning not in (None, "chunks", "all"):
+            raise ValueError("MLC_NEMOTRON_MTP_TAIL_PRUNING must be chunks or all")
         if self.trial.context_length != self.context_length:
             raise RuntimeError("Nemotron MTP libraries must support 16K context")
         self.tokenizer = Tokenizer(str(self.root / "dist/target-16k"))

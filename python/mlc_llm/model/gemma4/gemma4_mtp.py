@@ -282,30 +282,30 @@ class Gemma4UnifiedMTPTarget(Gemma4UnifiedForConditionalGeneration):
         hidden, *states = self._mtp_forward(tokens, cache)
         return self.get_logits(hidden), hidden, *states, cache
 
-    def get_default_spec(self):
+    def _mtp_spec(self):
         packed = {"param_mode": "packed", "effect_mode": "none"}
         cache = nn.spec.Object(object_type=PagedKVCache)
-        return nn.spec.ModuleSpec.from_raw(
-            {
-                "embed": {"input_ids": nn.spec.Tensor(["seq_len"], "int32"), "$": packed},
-                "mtp_prefill": {
-                    "tokens": nn.spec.Tensor([1, "seq_len"], "int32"),
-                    "cache": cache,
-                    "$": packed,
-                },
-                "mtp_verify": {
-                    "tokens": nn.spec.Tensor([1, "verify_len"], "int32"),
-                    "cache": cache,
-                    "$": packed,
-                },
-                "create_paged_kv_cache": {
-                    "max_batch_size": int,
-                    "max_total_seq_len": int,
-                    "prefill_chunk_size": int,
-                    "page_size": int,
-                    "support_sliding_window": int,
-                    "$": {"param_mode": "none", "effect_mode": "none"},
-                },
+        return {
+            "embed": {"input_ids": nn.spec.Tensor(["seq_len"], "int32"), "$": packed},
+            "mtp_prefill": {
+                "tokens": nn.spec.Tensor([1, "seq_len"], "int32"),
+                "cache": cache,
+                "$": packed,
             },
-            self,
-        )
+            "mtp_verify": {
+                "tokens": nn.spec.Tensor([1, "verify_len"], "int32"),
+                "cache": cache,
+                "$": packed,
+            },
+            "create_paged_kv_cache": {
+                "max_batch_size": int,
+                "max_total_seq_len": int,
+                "prefill_chunk_size": int,
+                "page_size": int,
+                "support_sliding_window": int,
+                "$": {"param_mode": "none", "effect_mode": "none"},
+            },
+        }
+
+    def get_default_spec(self):
+        return nn.spec.ModuleSpec.from_raw(self._mtp_spec(), self)

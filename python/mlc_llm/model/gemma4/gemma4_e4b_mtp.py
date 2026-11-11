@@ -155,21 +155,38 @@ def huggingface(config, quantization):
 
 
 class E4BMTPTarget(Gemma4ForConditionalGeneration):
-    def _mtp_forward(self, tokens, cache):
+    def _mtp_forward(self, tokens, cache, depth=None):
         op_ext.configure()
         body = self.language_model
         hidden = body.embed(tokens)
         positions = cache.get_query_positions(tokens.shape[0] * tokens.shape[1])
         per_layer = body._per_layer_inputs(hidden, tokens, None)
         shared = {}
-        for i, layer in enumerate(body.layers):
+        for i in range(depth or len(body.layers)):
             kind = self.config.text_config.layer_types[i]
-            hidden, kv = layer(hidden, per_layer[i], cache, positions, shared.get(kind))
+            hidden, kv = body.layers[i](hidden, per_layer[i], cache, positions, shared.get(kind))
             if i in body.shared_kv_source_layers:
                 shared[kind] = kv
         local = [_slice_head_dim(v, 256) for v in shared["sliding_attention"]]
         return body.norm(hidden), *local, *shared["full_attention"]
 
+    @xavier.prefill()
+    def mtp_prefill_kv(self, tokens, cache):
+        """Prompt tokens that need no prediction: only the layers that store K/V run.
+
+        The name matters: the cuBLAS dispatch selects functions named "prefill".
+        So does returning the hidden state: the cache call is declared pure, and
+        the last layer's would be removed, unwritten K/V and all, were its result unused.
+        """
+        hidden, *states = self._mtp_forward(
+            tokens, cache, self.config.text_config.first_kv_shared_layer
+        )
+        return hidden, *states, cache
+
     mtp_prefill = xavier.prefill()(Gemma4UnifiedMTPTarget.mtp_prefill)
     mtp_verify = Gemma4UnifiedMTPTarget.mtp_verify
-    get_default_spec = Gemma4UnifiedMTPTarget.get_default_spec
+
+    def get_default_spec(self):
+        spec = Gemma4UnifiedMTPTarget._mtp_spec(self)
+        spec["mtp_prefill_kv"] = dict(spec["mtp_prefill"])
+        return nn.spec.ModuleSpec.from_raw(spec, self)

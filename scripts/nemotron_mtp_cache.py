@@ -16,19 +16,20 @@ def common_prefix(left, right, limit):
 
 
 class CachedTrial(Trial):
+    # Prompt tokens that are not predicted from run the K/V layers only (mtp_prefill_kv):
+    # "chunks" keeps the last chunk on the full prefill path, so outputs do not change;
+    # "all" leaves only the last token, which then takes the decode path.
+    tail_pruning = None
+
     def __init__(
         self, target, assistant, short_assistant, runtime_library, budget=32768, assistants=None
     ):
         super().__init__(target, assistant, runtime_library, max_sequences=4, kv_budget=budget)
-        self.short_assistant = short_assistant
-        self.short_states = [
-            self.tensor(np.zeros((1, 1024, 2, d), dtype="float16")) for d in [256, 256, 512, 512]
-        ]
-        self.buckets = {
-            1024: (short_assistant, self.short_states),
-            self.context_length: (assistant, self.states),
-        }
-        for size, program in (assistants or {}).items():
+        # Assistants compiled for shorter contexts; none when the assistant
+        # attends the valid context only (MLC_E4B_MTP_ATTN=1).
+        self.buckets = {self.context_length: (assistant, self.states)}
+        shorter = {1024: short_assistant} if short_assistant else {}
+        for size, program in {**shorter, **(assistants or {})}.items():
             self.buckets[size] = (
                 program,
                 [
@@ -54,6 +55,17 @@ class CachedTrial(Trial):
                 self.tensor(np.array([ids], dtype="int32")),
                 self.cache,
             )[:6]
+        finally:
+            self.builtin("end_forward")(self.cache)
+
+    def fill(self, ids):
+        self.builtin("begin_forward")(
+            self.cache, tvm_ffi.Shape([self.sid]), tvm_ffi.Shape([len(ids)])
+        )
+        try:
+            return self.target.call(
+                "mtp_prefill_kv", self.tensor(np.array([ids], dtype="int32")), self.cache
+            )[1:5]
         finally:
             self.builtin("end_forward")(self.cache)
 
@@ -128,9 +140,23 @@ class CachedTrial(Trial):
         else:
             self.builtin("add_sequence")(self.cache, self.sid)
         self.committed = reuse
-        for offset in range(reuse, len(prompt), 512):
+        if self.tail_pruning == "all":
+            for offset in range(reuse, len(prompt) - 1, 512):
+                chunk = prompt[offset : min(offset + 512, len(prompt) - 1)]
+                self.append(self.fill(chunk), offset, len(chunk))
+                self.committed += len(chunk)
+            logits, hidden, *delta = self.forward(prompt[-1:])
+            self.append(delta, self.committed, 1)
+            self.committed += 1
+            self.copy(self.hidden, hidden, 5120)
+            return self.argmax(logits)[0], reuse
+        offsets = range(reuse, len(prompt), 512)
+        for offset in offsets:
             chunk = prompt[offset : offset + 512]
-            logits, hidden, *delta = self.forward(chunk, True)
+            if self.tail_pruning and offset != offsets[-1]:
+                delta = self.fill(chunk)
+            else:
+                logits, hidden, *delta = self.forward(chunk, True)
             self.append(delta, offset, len(chunk))
             self.committed += len(chunk)
         self.copy(self.hidden, hidden, 5120, source_offset=(len(chunk) - 1) * 5120)
@@ -143,7 +169,7 @@ class CachedTrial(Trial):
         self.builtin("add_sequence")(self.cache, self.sid)
         for offset in range(0, len(prompt), 512):
             chunk = prompt[offset : offset + 512]
-            _, _, *delta = self.forward(chunk, True)
+            delta = self.fill(chunk) if self.tail_pruning else self.forward(chunk, True)[2:]
             self.append(delta, offset, len(chunk))
         self.snapshot(prompt, pinned=True)
         self.device.sync()

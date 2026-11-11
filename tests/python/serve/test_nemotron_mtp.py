@@ -75,6 +75,32 @@ class Boundaries(unittest.TestCase):
             self.assertEqual(list(trial.entries), expected)
             self.assertEqual(trial.pinned["sid"], 1)
 
+    def test_tail_pruning_runs_the_whole_model_only_where_a_token_is_predicted(self):
+        prompt = [2] * 1200
+        for mode, kv_only, whole in [
+            (None, [], [(512, True), (512, True), (176, True)]),
+            ("chunks", [512, 512], [(176, True)]),
+            ("all", [512, 512, 175], [(1, False)]),
+        ]:
+            trial = CachedTrial.__new__(CachedTrial)
+            trial.tail_pruning = mode
+            trial.pinned, trial.entries = None, OrderedDict()
+            trial.budget, trial.next_sid, trial.cache, trial.hidden = 32768, 12, None, None
+            trial.builtin = lambda name: lambda *args: None
+            trial.append = lambda *args: None
+            trial.copy = lambda *args, **kwargs: None
+            trial.argmax = lambda *args: [7]
+            calls = ([], [])
+            trial.fill = lambda ids, calls=calls: calls[0].append(len(ids))
+            trial.forward = lambda ids, prefill=False, calls=calls: (
+                calls[1].append((len(ids), prefill)),
+                None,
+            )
+            with self.subTest(mode=mode):
+                self.assertEqual(trial.prepare(prompt, 4), (7, 0))
+                self.assertEqual(calls, (kv_only, whole))
+                self.assertEqual(trial.committed, len(prompt))
+
 
 class Drain(unittest.IsolatedAsyncioTestCase):
     async def test_response_cancellation_cannot_release_gpu_before_worker_exits(self):
