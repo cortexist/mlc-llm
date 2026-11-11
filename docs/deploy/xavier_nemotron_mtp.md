@@ -123,6 +123,75 @@ incorrectly answered 401 instead of 391, with and without prefix reuse. This
 is retained as a model-quality failure; successful execution is not a quality
 guarantee. No full-16K stress or quality sweep was performed.
 
+## All Xavier options — November 11
+
+`deploy/xavier/xavier-full.conf` adds three options to the service profile:
+
+| Setting | Effect |
+|---|---|
+| `MLC_NEMOTRON_PREFILL=paged` | `hybrid-width` for the current chunk; a Volta tensor-core kernel (`op/cuda/xavier_paged_kernel.cuh`) for every call over the cached pages, prefill and decode. Decode and verification rows keep each probability as two FP16 terms. |
+| `MLC_NEMOTRON_MTP_ASSISTANT=gemma4-e4b-mtp-assistant-native-16k-sm72.so` | One 16K assistant built with `MLC_E4B_MTP_ATTN=1`, which attends only the valid keys of its shared K/V state, in place of the five context buckets. |
+| `MLC_NEMOTRON_MTP_KV_PREFILL=1` | Prompt tokens except the last run `mtp_prefill_kv`: the 24 layers that store K/V. The last token takes a one-row verification step. |
+
+`MLC_NEMOTRON_MTP_TARGET` selects another target library name, for example to
+keep an older build for rollback. The target must contain `mtp_prefill_kv`,
+which every target compiled from this source does.
+
+### Build and enable
+
+`scripts/build_xavier_e4b_mtp.sh` builds everything, including the 16K
+assistant and the attention module (`dist/prefill-experiments`). With the
+service stopped, as above:
+
+```bash
+sudo systemctl stop mlc-nemotron
+bash scripts/build_xavier_e4b_mtp.sh ~/Models/gemma-4-E4B-IT-assistant
+sudo install -m 644 deploy/xavier/xavier-full.conf \
+  /etc/systemd/system/mlc-nemotron.service.d/xavier-full.conf
+sudo systemctl daemon-reload
+sudo systemctl reset-failed mlc-nemotron
+sudo systemctl start mlc-nemotron
+```
+
+The drop-in's name sorts after `prefill-width.conf`, whose attention variant
+it replaces. The startup log reports `'variant': 'paged'`. Removing the file
+and restarting returns the November 7 profile; the bucket assistants are still
+built.
+
+### Measurements
+
+AGX Xavier 32GB, MAXN with fixed clocks, 16K libraries, temperature 0, forced
+outputs; both profiles measured in one session.
+
+| | November 7 profile | All options |
+|---|---:|---:|
+| MTP decode, 60/68/90-token prompts, pooled tok/s | 37.27 | **38.94** |
+| Prefill, 161 / 448 / 910 tokens, tok/s | 329 / 522 / 424 | **504 / 807 / 808** |
+| Decode at 2,500 / 9,500 tokens of context, tok/s | 28.3 / 14.2 | **39.3 / 35.3** |
+| First token, new 9,500-token prompt | 68.5 s | **14.7 s** |
+| First token, 200 tokens added to a cached 9,500-token prompt | 2.90 s | **0.61 s** |
+| A 512-token prefill chunk after 9,280 cached tokens | 6.37 s | **0.97 s** |
+
+Where the time went: a one-row step reads the Q4 weights at memory bandwidth
+(about 40 ms), so short-context decode was already near its floor. What grew
+with context was attention over the cached pages, the bucket assistants (33 ms
+per draft step at 16K) and prefill through 18 layers whose output a prompt
+token does not need.
+
+K/V-only prefill is exact. The tensor-core kernel is not bit-identical to the
+November 7 kernels. Decode activations are quantized to int8, so small
+attention differences flip near-tie greedy choices: 748 of 768 teacher-forced
+predictions match (two previously accepted attention variants agree on 755),
+and one of the three recorded 128-token outputs is reproduced; the others
+diverge after 88 and 124 tokens. Service checks pass (arithmetic 391 with
+prefix reuse; the 1,280-token fixture still answers 401, as recorded on
+November 7). No task-quality benchmark was run.
+
+Tried and not kept: three drafts (a four-row verification step costs about
+6 ms more; slower on all ten measured prompts) and 8- instead of 16-page key
+segments (within 1%).
+[Per-run measurements and hashes](../benchmarks/xavier/nemotron-mtp-full-summary.json).
+
 ## Rollback
 
 The DFlash weights and libraries are retained. Removing the MTP override
