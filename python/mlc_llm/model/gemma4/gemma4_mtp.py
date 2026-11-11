@@ -6,6 +6,7 @@ Assistant KV inputs are frozen throughout a draft round and position is fixed.
 """
 
 import dataclasses
+import os
 
 from tvm import te
 from tvm.relax.frontend import nn
@@ -16,6 +17,7 @@ from mlc_llm.loader.standard_loader import make_standard_hf_loader
 from mlc_llm.model.model_utils import index_last_token
 from mlc_llm.nn import PagedKVCache
 from mlc_llm.op import xavier
+from mlc_llm.op.gemma4_mtp import shared_attention
 from mlc_llm.support.config import ConfigBase
 
 from .gemma4_audio import Gemma4RMSNorm
@@ -95,6 +97,9 @@ class SharedAttention(nn.Module):
             op.permute_dims(query, (0, 2, 1, 3)),
             (1, self.kv_heads, self.heads // self.kv_heads, self.head_dim),
         )
+        if os.environ.get("MLC_E4B_MTP_ATTN") == "1":
+            result = shared_attention(query, key, value, context_length, self.window)
+            return self.o_proj(op.reshape(result, (1, 1, self.heads * self.head_dim)))
         key = op.permute_dims(key, (0, 2, 3, 1))
 
         # Keep strided, dynamic-context attention out of the cuBLAS-Lt dense
