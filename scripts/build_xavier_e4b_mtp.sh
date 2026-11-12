@@ -44,6 +44,10 @@ export MLC_JP5_SINGLE_TOKEN=1 MLC_JP5_Q4_CUBLAS=1 MLC_XAVIER_Q4=1 MLC_XAVIER_ATT
 for size in 1k 16k; do
  taskset -c 0,1 python -m mlc_llm compile "dist/nemotron-e4b-mtp-$size/mlc-chat-config.json" --device cuda --opt "$opt" -o "dist/libs/nemotron-e4b-mtp-target-$size-sm72.so"
 done
+# The 16K target of deploy/xavier/xavier-full.conf: 4-bit projections that apply the
+# scales once per group of 32 weights, and a verification step of four rows (three
+# proposals).
+MLC_XAVIER_Q4=2 MLC_MTP_VERIFY_LEN=4 taskset -c 0,1 python -m mlc_llm compile "dist/nemotron-e4b-mtp-16k/mlc-chat-config.json" --device cuda --opt "$opt" -o dist/libs/nemotron-e4b-mtp-target-grouped-16k-sm72.so
 nvcc -O3 -shared -Xcompiler -fPIC -arch=sm_72 scripts/xavier_mtp_runtime.cu -o dist/libs/xavier-mtp-runtime.so
 # Attention callbacks: hybrid-width and the tensor-core kernel over the cached pages.
 taskset -c 0,1 python scripts/build_xavier_prefill.py

@@ -34,6 +34,13 @@ class Boundaries(unittest.TestCase):
             with self.assertRaises(BadRequestError):
                 self.engine._prepare(request, False)
 
+    def test_verification_reserve_follows_the_proposals(self):
+        self.engine.draft_tokens = 3
+        good = CompletionRequest(prompt=[2] * 16380, max_tokens=1, temperature=0)
+        self.assertEqual(self.engine._prepare(good, False)[1], 1)
+        with self.assertRaisesRegex(BadRequestError, "3 verification slots"):
+            self.engine._prepare(good.model_copy(update={"max_tokens": 2}), False)
+
     def test_unsupported_generation_controls_fail_explicitly(self):
         for kw in [
             {"temperature": 1},

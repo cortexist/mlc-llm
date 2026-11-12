@@ -1,4 +1,4 @@
-"""OpenAI engine adapter for resident Nemotron with two Gemma E4B MTP drafts.
+"""OpenAI engine adapter for resident Nemotron with Gemma E4B MTP drafts.
 
 Libraries are named under dist/libs. By default: the target, and assistants
 compiled for 1K to 16K contexts. Options, all for libraries built to match:
@@ -6,6 +6,8 @@ compiled for 1K to 16K contexts. Options, all for libraries built to match:
 MLC_NEMOTRON_MTP_TARGET        target library
 MLC_NEMOTRON_MTP_KV_PREFILL    1: K/V-only prefill, the target has mtp_prefill_kv (see CachedTrial)
 MLC_NEMOTRON_MTP_ASSISTANT     one assistant that attends the valid context only
+MLC_NEMOTRON_MTP_DRAFTS        proposals of a round (2); 3 needs a target built with
+                               MLC_MTP_VERIFY_LEN=4
 """
 
 import asyncio
@@ -34,7 +36,7 @@ from mlc_llm.tokenizers import StopStrHandler, TextStreamer, Tokenizer
 
 class NemotronMTP:
     context_length = 16384
-    draft_tokens = 2
+    draft_tokens = int(os.environ.get("MLC_NEMOTRON_MTP_DRAFTS", "2"))
 
     def __init__(self, root):
         self.root = Path(root)
@@ -102,7 +104,15 @@ class NemotronMTP:
             raise
 
     def _warm(self, prefix):
-        self.trial.generate([100] * 512, 4, lambda _: True, threading.Event(), cache_result=False)
+        # Long enough for one verification step of every row.
+        self.trial.generate(
+            [100] * 512,
+            self.draft_tokens + 2,
+            lambda _: True,
+            threading.Event(),
+            cache_result=False,
+            drafts=self.draft_tokens,
+        )
         if prefix:
             self.trial.pin(prefix)
 
@@ -154,12 +164,12 @@ class NemotronMTP:
             )
         if not prompt or any(t < 0 or t >= 262144 for t in prompt):
             raise BadRequestError("A nonempty prompt with valid token IDs is required")
-        remaining = self.context_length - len(prompt) - 2
+        remaining = self.context_length - len(prompt) - self.draft_tokens
         count = min(512, remaining) if request.max_tokens is None else request.max_tokens
         if count < 1 or count > remaining:
             raise BadRequestError(
                 f"16K context: prompt uses {len(prompt)} tokens; max_tokens must be "
-                f"1..{max(0, remaining)} (two verification slots)"
+                f"1..{max(0, remaining)} ({self.draft_tokens} verification slots)"
             )
         return prompt, count, stop
 
@@ -185,7 +195,9 @@ class NemotronMTP:
                         send("text", text)
                     return not stopper.stop_triggered
 
-                result = self.trial.generate(prompt, count, token, cancelled)
+                result = self.trial.generate(
+                    prompt, count, token, cancelled, drafts=self.draft_tokens
+                )
                 tail = streamer.put(stopper.finish()) + streamer.finish()
                 if tail:
                     send("text", tail)
@@ -305,7 +317,7 @@ class NemotronMTP:
     def status(self):
         return dict(
             mode="gemma_mtp",
-            draft_tokens=2,
+            draft_tokens=self.draft_tokens,
             context_length=self.context_length,
             cached_conversations=len(self.trial.entries),
             prefix_tokens=len(self.trial.pinned["tokens"]) if self.trial.pinned else 0,

@@ -3,8 +3,8 @@
 This fork runs **NVIDIA Nemotron 3.5 Bolt E4B** and **Gemma4 Unified 12B** on
 **Jetson AGX Xavier 32 GB**, using JetPack 5 / CUDA 11.4. It adds speculative
 decoding and kernels suited to Xavier's Volta GPU. With every Xavier option
-enabled (November 11), Nemotron with **Gemma E4B MTP decodes at 38.94 tokens/s**
-on short prompts and **35.3 tokens/s at 9,500 tokens of context**, and
+enabled (November 11), Nemotron with **Gemma E4B MTP decodes at 42.27 tokens/s**
+on short prompts and **40.8 tokens/s at 9,500 tokens of context**, and
 prefills **808 tokens/s** at 910 tokens. Gemma4 Unified 12B with its native
 MTP assistant decodes at **26–37 tokens/s**.
 
@@ -14,7 +14,7 @@ The original project overview is preserved in [README.upstream.md](README.upstre
 
 ## Nemotron with all Xavier options — November 11, 2026
 
-Three additions to the Gemma E4B MTP path, enabled together by
+Five additions to the Gemma E4B MTP path, enabled together by
 [`deploy/xavier/xavier-full.conf`](deploy/xavier/xavier-full.conf):
 
 - **Tensor-core attention over the cached pages.** A Volta WMMA kernel reads
@@ -26,47 +26,66 @@ Three additions to the Gemma E4B MTP path, enabled together by
 - **K/V-only prefill.** The last 18 of Nemotron's 42 layers store no K/V, and
   only the last prompt token is predicted from, so every other prompt token
   runs the first 24 layers only.
+- **Grouped 4-bit projections.** The small-batch kernel applies the scales of
+  a product once per group of 32 weights, not per chunk of 8. At short
+  context a verification step of two to four rows now costs 41–42 ms, where
+  two and three rows cost 48 and 46 ms.
+- **Three drafts.** With a fourth row at the cost of the third, a third
+  proposal pays on every prompt measured.
 
 Same protocols as the tables below, now with the **16K libraries** of the
-service; the November 7 configuration was rerun alongside. Decode: 60 / 68 / 90
-token prompts, 128 forced outputs, one warmup and two measured repetitions,
-nothing cached. Prefill: the 161 / 448 / 910-token fixture, prompt tokens over
-time to first token.
+service. Decode: 60 / 68 / 90 token prompts, 128 forced outputs, one warmup
+and two measured repetitions, nothing cached. Prefill: the 161 / 448 /
+910-token fixture, prompt tokens over time to first token. The first three
+options and the November 7 profile were measured in one session, the last two
+in a later one, in which the three-option row repeated at 38.97 pooled.
 
 | Decode tok/s | Prose (60) | Code (68) | Scheduling (90) | Pooled |
 |---|---:|---:|---:|---:|
 | MTP controller plain, November 7 profile | 24.52 | 24.30 | 23.93 | 24.25 |
-| MTP controller plain, all options | 25.36 | 25.19 | 25.32 | 25.29 |
+| MTP controller plain, all options | 26.41 | 26.40 | 26.10 | 26.30 |
 | Gemma E4B MTP, 2 drafts, November 7 profile | 33.25 | 43.31 | 36.60 | 37.27 |
-| **Gemma E4B MTP, 2 drafts, all options** | **34.79** | **44.88** | **38.44** | **38.94** |
+| + tensor-core attention, one assistant, K/V-only prefill | 34.79 | 44.88 | 38.44 | 38.94 |
+| + grouped projections | 33.87 | 48.10 | 40.61 | 40.03 |
+| **+ three drafts: all options** | **36.94** | **50.44** | **41.54** | **42.27** |
 
 | Prefill tok/s | 161 | 448 | 910 |
 |---|---:|---:|---:|
 | November 7 profile | 329.46 | 522.26 | 423.54 |
 | **All options** | **504.00** | **807.04** | **807.50** |
 
-The gains grow with context. One run each, 160 forced outputs:
+The last two options leave prefill as it was (506 / 832 / 808 tok/s in the
+later session). The gains grow with context. One text, 160 forced outputs on
+a cached prompt:
 
 | Prompt tokens | 300 | 2,500 | 5,000 | 9,500 |
 |---|---:|---:|---:|---:|
-| Decode tok/s, November 7 profile | 39.6 | 28.3 | 20.4 | 14.2 |
-| **Decode tok/s, all options** | **45.5** | **39.3** | **39.3** | **35.3** |
-| First token, new prompt (s), November 7 profile | 0.66 | 8.21 | 23.56 | 68.52 |
-| **First token, new prompt (s), all options** | **0.43** | **3.19** | **6.93** | **14.65** |
-| First token, 200 tokens added to a cached prompt (s), November 7 profile | 0.65 | 1.22 | 1.82 | 2.90 |
-| **First token, 200 tokens added (s), all options** | **0.34** | **0.41** | **0.48** | **0.61** |
+| Decode tok/s, November 7 profile | 40.0 | 24.0 | 18.6 | 10.5 |
+| Decode tok/s, first three options | 42.9 | 36.0 | 36.5 | 29.1 |
+| **Decode tok/s, all options** | **51.9** | **42.7** | **42.1** | **40.8** |
+| First token, new prompt (s), November 7 profile | 0.67 | 8.26 | 23.67 | 68.65 |
+| **First token, new prompt (s), all options** | **0.43** | **3.27** | **7.01** | **14.82** |
+| First token, 200 tokens added to a cached prompt (s), November 7 profile | 0.65 | 1.22 | 1.82 | 2.92 |
+| **First token, 200 tokens added (s), all options** | **0.35** | **0.42** | **0.49** | **0.62** |
 
 K/V-only prefill is exact: K/V states and logits are bit-identical with and
-without it. The new attention kernel is not bit-identical to the November 7
-kernels. Decode activations are quantized to int8, so small attention
-differences flip near-tie greedy choices: 748 of 768 teacher-forced
-predictions match the November 7 profile (the two previously accepted
-attention variants agree on 755), and one of the three recorded 128-token
-outputs is reproduced exactly; the others diverge after 88 and 124 tokens.
-No task-quality benchmark was run.
+without it. The attention kernel and the grouped projections are not
+bit-identical to what they replace. Decode activations are quantized to int8,
+so small differences flip near-tie greedy choices. Attention: 748 of 768
+teacher-forced predictions match the November 7 profile (the two previously
+accepted attention variants agree on 755), and one of the three recorded
+128-token outputs is reproduced exactly; the others diverge after 88 and 124
+tokens. Grouped projections: 754 of 768 predictions match the earlier kernel,
+every changed one within 0.28 of a tie, and three of six recorded outputs are
+reproduced; the others diverge after 5, 8 and 80 tokens. Because outputs
+diverge, grouping alone moves two-draft rates by −5% to +8% per prompt, while
+every round is 5–6% shorter. With three drafts all ten prompts gain, 6% to
+40%. No task-quality benchmark was run.
 
 [Build, enable and roll back](docs/deploy/xavier_nemotron_mtp.md#all-xavier-options--november-11)
-· [Per-run measurements, equivalence checks and hashes](docs/benchmarks/xavier/nemotron-mtp-full-summary.json).
+· Per-run measurements, equivalence checks and hashes:
+[first three options](docs/benchmarks/xavier/nemotron-mtp-full-summary.json),
+[grouped projections and three drafts](docs/benchmarks/xavier/nemotron-mtp-grouped-summary.json).
 
 ## Gemma4 12B with all Xavier options — November 11, 2026
 
@@ -323,7 +342,8 @@ compatibility investigation; these plain rates do not include speculative decodi
   with a 4-bit assistant and three proposals it reaches 26–37 tok/s on the 12B.
 - **Nemotron + Gemma E4B MTP:** trained centroid-filtered vocabulary head,
   parallel top-32 selection and GPU-resident shared state; two drafts reach
-  37.28 tok/s in the short-context comparison above.
+  37.28 tok/s in the November 7 comparison, three drafts with every Xavier
+  option 42.27.
 - **Resident model routing:** Nemotron shares one authenticated endpoint and
   FIFO GPU queue with either 12B + MTP or EmbeddingGemma 2 text embeddings;
   see the [resident switching PoC](docs/deploy/xavier_embedding_switch_poc.md).

@@ -96,15 +96,15 @@ sudo systemctl reset-failed mlc-nemotron
 sudo systemctl restart mlc-nemotron
 ```
 
-`/healthz` reports `speculative.mode=gemma_mtp`, `draft_tokens=2`, configured
-context length, cached-conversation count and pinned-prefix length.
+`/healthz` reports `speculative.mode=gemma_mtp`, `draft_tokens` (2 unless
+`MLC_NEMOTRON_MTP_DRAFTS` is set), configured context length, cached-conversation count and pinned-prefix length.
 
 Supported behavior includes greedy chat/raw completions, incremental text
 SSE, existing buffered native tool calls and client tool-result continuation,
 stop strings and validated buffered JSON objects. Generation is restricted to
 `temperature=0`, `n=1`; penalties, logit bias, logprobs, echo, suffix and grammar
-constraints are rejected explicitly. Two verification slots are reserved in
-the context budget. Cancellation drains the synchronous GPU worker before
+constraints are rejected explicitly. One verification slot per draft is
+reserved in the context budget. Cancellation drains the synchronous GPU worker before
 the FIFO admits another model.
 
 ### Deployment validation (November 7)
@@ -125,22 +125,26 @@ guarantee. No full-16K stress or quality sweep was performed.
 
 ## All Xavier options — November 11
 
-`deploy/xavier/xavier-full.conf` adds three options to the service profile:
+`deploy/xavier/xavier-full.conf` adds five options to the service profile:
 
 | Setting | Effect |
 |---|---|
 | `MLC_NEMOTRON_PREFILL=paged` | `hybrid-width` for the current chunk; a Volta tensor-core kernel (`op/cuda/xavier_paged_kernel.cuh`) for every call over the cached pages, prefill and decode. Decode and verification rows keep each probability as two FP16 terms. |
 | `MLC_NEMOTRON_MTP_ASSISTANT=gemma4-e4b-mtp-assistant-native-16k-sm72.so` | One 16K assistant built with `MLC_E4B_MTP_ATTN=1`, which attends only the valid keys of its shared K/V state, in place of the five context buckets. |
 | `MLC_NEMOTRON_MTP_KV_PREFILL=1` | Prompt tokens except the last run `mtp_prefill_kv`: the 24 layers that store K/V. The last token takes a one-row verification step. |
+| `MLC_NEMOTRON_MTP_TARGET=nemotron-e4b-mtp-target-grouped-16k-sm72.so` | A target built with `MLC_XAVIER_Q4=2`: the 4-bit projection kernel for 1–4 rows applies the scales of a product once per group of 32 weights (`mat_q4_grouped` in `op/cuda/xavier_q4.cu`), not per chunk of 8. Built with `MLC_MTP_VERIFY_LEN=4`, so a verification step takes four rows. |
+| `MLC_NEMOTRON_MTP_DRAFTS=3` | Three drafts per round. Needs the four-row target. |
 
-`MLC_NEMOTRON_MTP_TARGET` selects another target library name, for example to
-keep an older build for rollback. The target must contain `mtp_prefill_kv`,
-which every target compiled from this source does.
+Without the last two lines the service uses the default target
+(`MLC_XAVIER_Q4=1`, three rows) and two drafts: the profile as first published
+on November 11. Every target compiled from this source contains
+`mtp_prefill_kv`.
 
 ### Build and enable
 
 `scripts/build_xavier_e4b_mtp.sh` builds everything, including the 16K
-assistant and the attention module (`dist/prefill-experiments`). With the
+assistant, the grouped target and the attention module
+(`dist/prefill-experiments`). With the
 service stopped, as above:
 
 ```bash
@@ -161,36 +165,59 @@ built.
 ### Measurements
 
 AGX Xavier 32GB, MAXN with fixed clocks, 16K libraries, temperature 0, forced
-outputs; both profiles measured in one session.
+outputs. "First three" is the profile without the grouped target and the third
+draft. The long-context rows are from one text (this repository's README and
+benchmark guide), each profile in its own process.
 
-| | November 7 profile | All options |
-|---|---:|---:|
-| MTP decode, 60/68/90-token prompts, pooled tok/s | 37.27 | **38.94** |
-| Prefill, 161 / 448 / 910 tokens, tok/s | 329 / 522 / 424 | **504 / 807 / 808** |
-| Decode at 2,500 / 9,500 tokens of context, tok/s | 28.3 / 14.2 | **39.3 / 35.3** |
-| First token, new 9,500-token prompt | 68.5 s | **14.7 s** |
-| First token, 200 tokens added to a cached 9,500-token prompt | 2.90 s | **0.61 s** |
-| A 512-token prefill chunk after 9,280 cached tokens | 6.37 s | **0.97 s** |
+| | November 7 profile | First three | All options |
+|---|---:|---:|---:|
+| MTP decode, 60/68/90-token prompts, pooled tok/s | 37.27 | 38.94 | **42.27** |
+| Plain decode through the MTP controller, pooled tok/s | 24.25 | 25.29 | **26.30** |
+| Prefill, 161 / 448 / 910 tokens, tok/s | 329 / 522 / 424 | 504 / 807 / 808 | **506 / 832 / 808** |
+| Decode at 2,500 / 9,500 tokens of context, tok/s | 24.0 / 10.5 | 36.0 / 29.1 | **42.7 / 40.8** |
+| First token, new 9,500-token prompt | 68.6 s | 14.7 s | **14.8 s** |
+| First token, 200 tokens added to a cached 9,500-token prompt | 2.92 s | 0.62 s | **0.62 s** |
+| A 512-token prefill chunk after 9,280 cached tokens | 6.40 s | 0.97 s | **0.97 s** |
+
+| Verification step, ms | 1 row | 2 rows | 3 rows | 4 rows |
+|---|---:|---:|---:|---:|
+| 64 cached tokens, first three | 40.2 | 47.9 | 45.7 | — |
+| 64 cached tokens, all options | 37.3 | 40.8 | 42.1 | 41.3 |
+| 9,792 cached tokens, first three | 49.4 | 57.5 | 55.9 | — |
+| 9,792 cached tokens, all options | 47.3 | 51.2 | 52.5 | 51.4 |
 
 Where the time went: a one-row step reads the Q4 weights at memory bandwidth
 (about 40 ms), so short-context decode was already near its floor. What grew
 with context was attention over the cached pages, the bucket assistants (33 ms
 per draft step at 16K) and prefill through 18 layers whose output a prompt
-token does not need.
+token does not need. Further rows of a verification step were bound by the
+arithmetic of the projection kernel, not by memory: grouping it made a fourth
+row cost what the third did, which is what lets a third draft pay.
 
 K/V-only prefill is exact. The tensor-core kernel is not bit-identical to the
 November 7 kernels. Decode activations are quantized to int8, so small
 attention differences flip near-tie greedy choices: 748 of 768 teacher-forced
 predictions match (two previously accepted attention variants agree on 755),
 and one of the three recorded 128-token outputs is reproduced; the others
-diverge after 88 and 124 tokens. Service checks pass (arithmetic 391 with
-prefix reuse; the 1,280-token fixture still answers 401, as recorded on
-November 7). No task-quality benchmark was run.
+diverge after 88 and 124 tokens. The grouped projections round differently
+from the kernel they replace: 754 of 768 predictions match it, every changed
+one within 0.28 of a tie (the top logit moves by 0.05 at the median and by
+2.0 at most), and three of its six recorded outputs are reproduced; the
+others diverge after 5, 8 and 80 tokens. Service checks pass
+in both forms of the profile (arithmetic 391 with prefix reuse; the
+1,280-token fixture still answers 401, as recorded on November 7). No
+task-quality benchmark was run.
 
-Tried and not kept: three drafts (a four-row verification step costs about
-6 ms more; slower on all ten measured prompts) and 8- instead of 16-page key
-segments (within 1%).
-[Per-run measurements and hashes](../benchmarks/xavier/nemotron-mtp-full-summary.json).
+Because outputs diverge at near-ties, the grouped kernel alone moves the rate
+with two drafts by −5% to +8% per prompt, although every round is 5–6%
+shorter. With the third draft all ten prompts measured gain, 6% to 40% over
+the first three options. A third draft did not pay before: with the earlier
+kernel a four-row step cost about 6 ms more than a three-row one.
+
+Tried and not kept: 8- instead of 16-page key segments (within 1%).
+Per-run measurements and hashes:
+[first three options](../benchmarks/xavier/nemotron-mtp-full-summary.json),
+[grouped projections and three drafts](../benchmarks/xavier/nemotron-mtp-grouped-summary.json).
 
 ## Rollback
 
