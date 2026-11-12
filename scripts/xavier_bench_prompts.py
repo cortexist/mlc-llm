@@ -15,3 +15,14 @@ FILLER = (
     "The quick brown fox jumps over the lazy dog while the committee reviews the quarterly "
     "budget, the weather shifts from rain to sun, and the engineers rebuild the cache layer. "
 )
+
+# Added for the Qwen3.5 speculative decoding runs: answers of a hundred tokens and more.
+CODE = (
+    "Write a Python function that merges overlapping intervals in a list of (start, end) "
+    "tuples. Include a short docstring and two example calls."
+)
+PROSE = "Explain in about 150 words why the sky is blue and why sunsets are red."
+PLAN = (
+    "I have meetings on Monday 9-11 and Wednesday 14-16 and need three two-hour focus blocks "
+    "this week between 9 and 17. Propose a schedule and explain the choices briefly."
+)

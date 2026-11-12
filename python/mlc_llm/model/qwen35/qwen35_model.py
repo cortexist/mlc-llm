@@ -430,8 +430,11 @@ class Qwen35GatedDeltaNet(nn.Module):
         )
 
         # Causal Conv1D using existing helper logic
+        held = xavier.held_rows()
+        conv_input = qkv
         qkv, new_conv_state = self._causal_conv1d_with_state(qkv, conv_state)
-        state = state.set(layer_idx, 1, new_conv_state)
+        if held is None:
+            state = state.set(layer_idx, 1, new_conv_state)
 
         # SiLU activation on QKV after conv
         qkv = op.silu(qkv)
@@ -478,8 +481,11 @@ class Qwen35GatedDeltaNet(nn.Module):
         # Cast recurrent output back to model dtype
         out_recurrent = op.astype(out_recurrent, self.dtype)
 
-        # Write updated state back to RNNState (state_id=0)
-        state = state.set(layer_idx, 0, state_out_layer)
+        # Write updated state back to RNNState (state_id=0), or hold the rows for commit_rows
+        if held is None:
+            state = state.set(layer_idx, 0, state_out_layer)
+        else:
+            held.append(xavier.pack_rows(conv_input, k, v, gate, beta))
 
         # Output gating
         out_normed = self.norm(out_recurrent)
@@ -764,6 +770,47 @@ class Qwen35LMHeadModel(nn.Module):
     ):
         return self._forward(input_embeds, paged_kv_cache, rnn_state)
 
+    @xavier.small_batch()
+    def verify_hold(
+        self,
+        input_embeds: Tensor,
+        paged_kv_cache: PagedKVCache,
+        rnn_state: RNNState,
+    ):
+        """`batch_verify` of one sequence that leaves the recurrent state where it was.
+
+        Also returns what `commit_rows` needs to advance it by the accepted rows.
+        """
+        with xavier.hold_rows() as held:
+            logits, paged_kv_cache, rnn_state = self._forward(
+                input_embeds, paged_kv_cache, rnn_state
+            )
+        return logits, paged_kv_cache, rnn_state, op.concat(held, dim=0)
+
+    def commit_rows(self, held: Tensor, rows: tirx.Var, rnn_state: RNNState):
+        """Advance the recurrent state by the first `rows` rows of the last `verify_hold`."""
+        n_vh = self.linear_num_value_heads
+        K, V = self.linear_key_head_dim, self.linear_value_head_dim
+        conv_shape = (1, self.config.linear_conv_kernel_dim - 1, self._held_width()[0])
+        for layer in range(self.config.layer_types().count("linear_attention")):
+            state, conv_state = xavier.commit_rows(
+                held,
+                layer,
+                rows,
+                rnn_state.get(layer, 0, (1, n_vh, K, V), "float32"),
+                rnn_state.get(layer, 1, conv_shape, self.dtype),
+            )
+            rnn_state = rnn_state.set(layer, 0, state)
+            rnn_state = rnn_state.set(layer, 1, conv_state)
+        return rnn_state
+
+    def _held_width(self):
+        """Convolution channels of a linear-attention layer and the width of a held row."""
+        n_kh, n_vh = self.config.linear_num_key_heads, self.linear_num_value_heads
+        K, V = self.linear_key_head_dim, self.linear_value_head_dim
+        channels = 2 * n_kh * K + n_vh * V
+        return channels, channels + n_kh * K + n_vh * V + 2 * n_vh
+
     def create_rnn_state(
         self,
         max_batch_size: tirx.Var,
@@ -874,4 +921,24 @@ class Qwen35LMHeadModel(nn.Module):
                 },
             },
         }
+        if xavier.gdn_enabled():
+            layers = self.config.layer_types().count("linear_attention")
+            mod_spec["verify_hold"] = {
+                "input_embeds": nn.spec.Tensor([1, "verify_len", self.hidden_size], self.dtype),
+                "paged_kv_cache": nn.spec.Object(object_type=PagedKVCache),
+                "rnn_state": nn.spec.Object(object_type=RNNState),
+                "$": {
+                    "param_mode": "packed",
+                    "effect_mode": "none",
+                },
+            }
+            mod_spec["commit_rows"] = {
+                "held": nn.spec.Tensor([layers, "verify_len", self._held_width()[1]], "float32"),
+                "rows": int,
+                "rnn_state": nn.spec.Object(object_type=RNNState),
+                "$": {
+                    "param_mode": "none",
+                    "effect_mode": "none",
+                },
+            }
         return nn.spec.ModuleSpec.from_raw(mod_spec, self)

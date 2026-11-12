@@ -122,26 +122,16 @@ def gdn_enabled():
     return os.environ.get("MLC_XAVIER_GDN") == "1"
 
 
-def gated_delta(q, k, v, gate, beta, state):
-    """Gated delta rule over a chunk of tokens; returns the outputs and the new state in FP32."""
+def _gdn_module():
     from .extern import get_store
 
     target = get_store().target
     if target is not None and (target.kind.name != "cuda" or target.attrs.get("arch") != "sm_72"):
         raise ValueError("MLC_XAVIER_GDN is restricted to sm_72")
-    if {q.dtype, k.dtype, v.dtype} != {"float16"} or {int(q.shape[-1]), int(v.shape[-1])} != {128}:
-        raise ValueError("MLC_XAVIER_GDN requires FP16 q, k, v with 128-wide heads")
-
-    def outputs(_q, _k, values, _gate, _beta, old):
-        return (
-            nn.Tensor.placeholder(values.shape, "float32"),
-            nn.Tensor.placeholder(old.shape, "float32"),
-        )
-
     exporter = Exporter.current()
     if not hasattr(exporter, "_xavier_gdn"):
         module = nn.SourceModule(
-            {"xavier_gdn": outputs},
+            dict.fromkeys(["xavier_gdn", "xavier_gdn_commit"], lambda *args: None),
             Path(__file__).parent / "cuda/xavier_gdn.cu",
             "cu",
             compile_options=[*nn.SourceModule.get_compile_options("cu"), "-arch=sm_72"],
@@ -149,8 +139,64 @@ def gated_delta(q, k, v, gate, beta, state):
         )
         nn.add_extern(module)
         exporter._xavier_gdn = module
+
+
+def gated_delta(q, k, v, gate, beta, state):
+    """Gated delta rule over a chunk of tokens; returns the outputs and the new state in FP32."""
+    if {q.dtype, k.dtype, v.dtype} != {"float16"} or {int(q.shape[-1]), int(v.shape[-1])} != {128}:
+        raise ValueError("MLC_XAVIER_GDN requires FP16 q, k, v with 128-wide heads")
+    _gdn_module()
     return nn.op.extern(
         "xavier_gdn",
         args=[q, k, v, gate, beta, state],
-        out=list(outputs(q, k, v, gate, beta, state)),
+        out=[
+            nn.Tensor.placeholder(v.shape, "float32"),
+            nn.Tensor.placeholder(state.shape, "float32"),
+        ],
+    )
+
+
+# Speculative verification: the rows of a `hold_rows()` forward leave the recurrent state
+# where it was, and `commit_rows` advances it by the rows that were accepted.
+_HELD = ContextVar("xavier_held_rows", default=None)
+
+
+@contextmanager
+def hold_rows():
+    """Collects one `pack_rows` tensor per linear-attention layer instead of new states."""
+    held = []
+    token = _HELD.set(held)
+    try:
+        yield held
+    finally:
+        _HELD.reset(token)
+
+
+def held_rows():
+    return _HELD.get()
+
+
+def pack_rows(conv_input, k, v, gate, beta):
+    """What `commit_rows` needs of one layer and one sequence: (1, rows, width) in FP32."""
+    rows = conv_input.shape[1]
+
+    def flat(x):
+        width = 1
+        for extent in x.shape[2:]:
+            width *= int(extent)
+        return nn.op.reshape(nn.op.astype(x, "float32"), (1, rows, width))
+
+    return nn.op.concat([flat(x) for x in (conv_input, k, v, gate, beta)], dim=-1)
+
+
+def commit_rows(held, layer, rows, state, conv_state):
+    """State and convolution state after the first `rows` held rows of `layer`."""
+    _gdn_module()
+    return nn.op.extern(
+        "xavier_gdn_commit",
+        args=[held, layer, rows, state, conv_state],
+        out=[
+            nn.Tensor.placeholder(state.shape, "float32"),
+            nn.Tensor.placeholder(conv_state.shape, conv_state.dtype),
+        ],
     )
