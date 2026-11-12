@@ -202,6 +202,7 @@ class Gemma4UnifiedAssistantForCausalLM(nn.Module):
         if dtype is not None:
             self.dtype = dtype
 
+    @xavier.small_batch()
     def mtp_step(
         self,
         embedding,
@@ -273,6 +274,7 @@ class Gemma4UnifiedMTPTarget(Gemma4UnifiedForConditionalGeneration):
         hidden = self.language_model.norm(hidden)
         return hidden, *state["sliding_attention"], *state["full_attention"]
 
+    @xavier.prefill()
     def mtp_prefill(self, tokens, cache):
         hidden, *states = self._mtp_forward(tokens, cache)
         return self.get_logits(index_last_token(hidden)), hidden, *states, cache

@@ -113,6 +113,7 @@ because MLC conversion omits `chat_template.jinja`.
 
 To install the optional second model after building the MTP artifacts, copy
 `scripts/gemma4_mtp_service.py`, `scripts/bench_xavier_mtp.py`,
+`scripts/bench_xavier_e4b_mtp.py` (the controller both MTP paths share),
 `scripts/xavier_serve_queue.py` and the updated `scripts/serve_xavier_nemotron.py`
 to the deployed checkout, then install the drop-in:
 
@@ -123,6 +124,16 @@ sudo install -m 644 deploy/xavier/dual-model.conf \
 sudo systemctl daemon-reload
 sudo systemctl restart mlc-nemotron
 ```
+
+`gemma4-12b-full.conf` adds the 12B options of November 11: tensor-core
+attention (`MLC_GEMMA4_MTP_PREFILL=paged`), the 4-bit assistant
+(`MLC_GEMMA4_MTP_ASSISTANT=q4f16_1`) and three proposals per round
+(`MLC_GEMMA4_MTP_DRAFTS=3`). It needs the libraries of the current
+`scripts/build_xavier_contexts.sh`, and was checked in one process with
+Nemotron under `xavier-full.conf`; see the
+[12B MTP notes](../../docs/deploy/xavier_gemma4_mtp.md#all-xavier-options--november-11-2026).
+Without it the adapter keeps the FP16 assistant, the earlier attention and two
+proposals, also with the new libraries.
 
 For Nemotron-only operation, set `Environment=MLC_GEMMA4_MTP=0` in that drop-in,
 reload systemd and restart the service. Keep the shared-queue helper beside the
@@ -296,7 +307,9 @@ With the original converted artifacts present and the service stopped, run
 `bash scripts/build_xavier_contexts.sh` from the repository root. It creates
 separate `dist/target-16k`, `dist/draft-16k`, `dist/gemma4-12b-mtp-target-4k`
 and `dist/gemma4-12b-mtp-assistant-4k` configurations linking existing weights.
-No weight reconversion or C++ runtime rebuild is required. The serving script
+No reconversion of the existing weights or C++ runtime rebuild is required; the
+script converts the 12B assistant to 4 bits once, and builds the token-selection
+runtime and the attention module that the 12B adapter loads. The serving script
 uses the corresponding `*-16k-sm72.so` and `*-4k-sm72.so` libraries. The original
 8K/1K artifacts remain available for rollback with the prior serving script.
 

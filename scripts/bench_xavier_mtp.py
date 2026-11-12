@@ -1,200 +1,53 @@
-"""Direct-VM, greedy Unified 12B MTP prototype (one sequence, compiled context limit).
+"""Direct-VM, greedy Unified 12B MTP benchmark (one sequence, compiled context limit).
 
-Timings include Python control and CPU copies of shared KV/hidden states. This
-is a correctness/acceptance experiment, not the MLCEngine serving path.
+Shared K/V and hidden states stay on the GPU (bench_xavier_e4b_mtp.Trial); only
+the selected token IDs are copied back. Not the MLCEngine serving path.
 """
 
 import argparse
 import json
-import time
 from pathlib import Path
 
-import mlc_llm  # Register runtime functions before loading compiled programs.
+import bench_xavier_e4b_mtp
 import numpy as np
 import tvm_ffi
-import tvm_tirx
+from mtp_program import Program  # The resident services import it from here.
+from xavier_bench_prompts import DESIGN_NOTE, FILLER
+
+import mlc_llm
 from mlc_llm.protocol.conversation_protocol import Conversation
 from mlc_llm.serve import engine_utils
 from mlc_llm.tokenizers import Tokenizer
-from xavier_bench_prompts import DESIGN_NOTE, FILLER
 
 
-class Program:
-    def __init__(self, model, library, share_params_from=None):
-        self.module = tvm_ffi.load_module(str(library))
-        self.vm = self.module["vm_load_executable"]()
-        self.vm["vm_initialization"](2, 0, 1, 0)
-        metadata = json.loads(self.vm["_metadata"]())
-        self.context_length = metadata["context_window_size"]
-        self.parameter_metadata = metadata["params"]
-        if share_params_from is not None:
-            if self.parameter_metadata != share_params_from.parameter_metadata:
-                raise ValueError("Shared model parameter metadata must match exactly")
-            self.params = share_params_from.params
-            return
-        get = tvm_ffi.get_global_func
-        get("vm.builtin.tensor_cache.load")(str(model), 2, 0)
-        self.params = get("vm.builtin.param_array_from_cache_by_name")(
-            [p["name"] for p in metadata["params"]]
-        )
-        get("vm.builtin.tensor_cache.clear")()
+class Trial(bench_xavier_e4b_mtp.Trial):
+    """The Unified 12B shapes: eight K/V heads in local layers, one in global ones."""
 
-    def call(self, name, *args):
-        return self.vm[name](*args, self.params)
-
-
-class Trial:
-    def __init__(self, target, assistant, capture=None):
-        self.target, self.assistant = target, assistant
-        self.context_length = min(target.context_length, assistant.context_length)
-        self.device = tvm_tirx.cuda(0)
+    def __init__(self, target, assistant, runtime_library, capture=None):
+        super().__init__(target, assistant, runtime_library, hidden_size=3840, kv_heads=(8, 1))
         self.capture = capture
-        self.captured = False
-        self.builtin = lambda name: tvm_ffi.get_global_func("vm.builtin.kv_state_" + name)
-        self.cache = target.vm["create_tir_paged_kv_cache"](
-            *[tvm_ffi.Shape([n]) for n in (1, self.context_length, 512, 16, 0)]
-        )
 
-    def tensor(self, array):
-        return tvm_tirx.runtime.tensor(np.ascontiguousarray(array), self.device)
-
-    def forward(self, ids, prefill=False):
-        self.builtin("begin_forward")(self.cache, tvm_ffi.Shape([0]), tvm_ffi.Shape([len(ids)]))
-        result = self.target.call(
-            "mtp_prefill" if prefill else "mtp_verify",
-            self.tensor(np.array([ids], dtype="int32")),
-            self.cache,
-        )
-        self.builtin("end_forward")(self.cache)
-        return [x.numpy() for x in result[:6]]
-
-    def run(self, prompt, count, drafts, ignore_eos=False):
-        if not 0 <= drafts <= 2 or count < 1:
-            raise ValueError("Use 0..2 draft tokens and a positive output limit")
-        if not prompt:
-            raise ValueError("A nonempty tokenized prompt is required")
-        if len(prompt) + count + drafts > self.context_length:
-            raise ValueError(
-                f"Context must fit {self.context_length} tokens including verification"
+    def draft(self, token, previous, assistant=None, states=None):
+        if self.capture:
+            # One actual step with its inputs, for comparison with the reference.
+            committed = int(self.position.numpy()[0])
+            embedding = self.target.call("embed", self.tensor(np.array([token], dtype="int32")))
+            embedding = self.reshape(embedding, tvm_ffi.Shape(self.hidden.shape))
+            logits, hidden = self.assistant.call(
+                "mtp_step", embedding, previous, *self.states, self.position, self.position
             )
-        self.builtin("clear")(self.cache)
-        self.builtin("add_sequence")(self.cache, 0)
-        self.device.sync()
-        start = time.perf_counter()
-        # The target's compiled seq_len bound is 512, even when the full
-        # request fits the full compiled context. Preserve shared KV across chunks.
-        states = None
-        for offset in range(0, len(prompt), 512):
-            logits, hidden, *delta = self.forward(prompt[offset : offset + 512], prefill=True)
-            states = (
-                delta
-                if states is None
-                else [np.concatenate([a, b], axis=1) for a, b in zip(states, delta)]
+            names = ("local_key", "local_value", "global_key", "global_value")
+            np.savez(
+                self.capture,
+                embedding=embedding.numpy(),
+                previous_hidden=previous.numpy(),
+                **{name: s.numpy()[:, :committed] for name, s in zip(names, self.states)},
+                position=np.array([committed], dtype="int32"),
+                logits=logits.numpy(),
+                hidden=hidden.numpy(),
             )
-        frontier = int(logits.reshape(-1, logits.shape[-1])[-1].argmax())
-        hidden = hidden[:, -1:, :]
-        output = [frontier]
-        first = time.perf_counter()
-        committed = len(prompt)
-        accepted = proposed = rounds = 0
-        accepted_by_round = []
-        stop = {1, 50, 106}
-        while len(output) < count and (ignore_eos or output[-1] not in stop):
-            proposals = []
-            last = frontier
-            previous = hidden
-            # Reserve one output slot for the target's bonus token.
-            width = min(drafts, count - len(output) - 1)
-            shared = (
-                [
-                    self.tensor(
-                        np.pad(a, ((0, 0), (0, self.context_length - a.shape[1]), (0, 0), (0, 0)))
-                    )
-                    for a in states
-                ]
-                if width
-                else []
-            )
-            position = self.tensor(np.array([committed], dtype="int32"))
-            context_length = self.tensor(np.array([states[0].shape[1]], dtype="int32"))
-            for _ in range(width):
-                embedding = (
-                    self.target.call("embed", self.tensor(np.array([last], dtype="int32")))
-                    .numpy()
-                    .reshape(1, 1, -1)
-                )
-                inputs = [embedding, previous, *states]
-                result = self.assistant.call(
-                    "mtp_step",
-                    self.tensor(embedding),
-                    self.tensor(previous),
-                    *shared,
-                    position,
-                    context_length,
-                )
-                draft_logits, previous = (a.numpy() for a in result)
-                if self.capture and not self.captured:
-                    np.savez(
-                        self.capture,
-                        **dict(
-                            zip(
-                                (
-                                    "embedding",
-                                    "previous_hidden",
-                                    "local_key",
-                                    "local_value",
-                                    "global_key",
-                                    "global_value",
-                                ),
-                                inputs,
-                            )
-                        ),
-                        position=np.array([committed], dtype="int32"),
-                        logits=draft_logits,
-                        hidden=previous,
-                    )
-                    self.captured = True
-                last = int(draft_logits.argmax())
-                proposals.append(last)
-            logits, verify_hidden, *delta = self.forward([frontier, *proposals])
-            predicted = logits[0].argmax(axis=-1).tolist()
-            match = 0
-            for candidate, actual in zip(proposals, predicted):
-                if candidate != actual:
-                    break
-                match += 1
-            keep = 1 + match
-            rejected = len(proposals) - match
-            if rejected:
-                self.builtin("popn")(self.cache, 0, rejected)
-            states = [np.concatenate([a, b[:, :keep]], axis=1) for a, b in zip(states, delta)]
-            hidden = verify_hidden[:, match : match + 1, :]
-            frontier = int(predicted[match])
-            emitted = proposals[:match] + [frontier]
-            for token in emitted:
-                output.append(token)
-                if not ignore_eos and token in stop:
-                    break
-            committed += keep
-            rounds += 1
-            accepted += match
-            proposed += len(proposals)
-            accepted_by_round.append(match)
-        self.device.sync()
-        end = time.perf_counter()
-        return dict(
-            prompt_tokens=len(prompt),
-            tokens=output,
-            completion_tokens=len(output),
-            ttft_s=first - start,
-            elapsed_s=end - start,
-            decode_s=end - first,
-            decode_tok_s=(len(output) - 1) / (end - first),
-            rounds=rounds,
-            proposed=proposed,
-            accepted=accepted,
-            accepted_by_round=accepted_by_round,
-        )
+            self.capture = None
+        return super().draft(token, previous, assistant, states)
 
 
 def main():
@@ -203,7 +56,15 @@ def main():
     parser.add_argument("--target-lib", default="dist/libs/gemma4-12b-mtp-target-sm72.so")
     parser.add_argument("--assistant", required=True)
     parser.add_argument("--assistant-lib", default="dist/libs/gemma4-12b-mtp-assistant-sm72.so")
-    parser.add_argument("--draft-tokens", type=int, choices=(1, 2), default=2)
+    parser.add_argument("--runtime", default="dist/libs/xavier-mtp-runtime.so")
+    parser.add_argument("--attention", choices=["baseline", "paged"], default="baseline")
+    parser.add_argument(
+        "--draft-tokens",
+        type=int,
+        choices=(1, 2, 3),
+        default=2,
+        help="three need a target built with MLC_MTP_VERIFY_LEN=4",
+    )
     parser.add_argument("--tokens", type=int, default=16)
     parser.add_argument("--cases", default="short,chat")
     parser.add_argument("--repeats", type=int, default=1)
@@ -227,13 +88,17 @@ def main():
         ids = [i for part in parts for i in part]
         return (conv.system_prefix_token_ids or []) + ids
 
+    if args.attention == "paged":
+        from mlc_llm.op.xavier_prefill import install
+
+        install("paged", Path(args.target) / "mlc-chat-config.json")
     print("Loading target and official MTP assistant", flush=True)
     target = Program(args.target, args.target_lib)
     assistant = Program(args.assistant, args.assistant_lib)
-    trial = Trial(target, assistant, args.capture)
+    trial = Trial(target, assistant, args.runtime, args.capture)
     results = dict(
         args=vars(args),
-        prototype="direct VM with CPU state copies",
+        prototype="direct VM, state on the GPU",
         mlc_source=mlc_llm.__file__,
         runs=[],
     )

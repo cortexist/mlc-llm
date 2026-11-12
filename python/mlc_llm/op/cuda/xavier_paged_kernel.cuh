@@ -1,11 +1,11 @@
 // Attention over the cached pages on Volta tensor cores, for any number of
 // query rows of one sequence: a decode step, a verification or a prefill chunk.
 //
-// A block takes the queries of up to 4*T rows for one K/V head, whose four query
-// heads share K and V, and one segment of the keys. It reads the pages in place,
-// 16 keys per tile: K twice (row maxima, then probabilities) and V once. Nothing
-// is rescaled along the way. A block that has all the keys writes the result;
-// otherwise `merge` joins the segments by their maxima.
+// A block takes 16*T queries that share K and V: the Group query heads of one
+// K/V head, for 16*T/Group rows, and one segment of the keys. It reads the pages
+// in place, 16 keys per tile: K twice (row maxima, then probabilities) and V
+// once. Nothing is rescaled along the way. A block that has all the keys writes
+// the result; otherwise `merge` joins the segments by their maxima.
 //
 // Probabilities enter the value product as FP16. A step that is predicted from
 // (T = 1: decode or verification) keeps two FP16 terms of each, 22 bits, which
@@ -23,32 +23,47 @@ constexpr int Warps = 8;     // each scores one page of a step
 using Tile = wmma::fragment<wmma::accumulator, 16, 16, 16, float>;
 constexpr int E = Tile::num_elements;
 
+// A kind of layer, fixed at compile time. Heads: query heads. KV: stored K/V
+// heads. Group: the query heads of a block; more than Heads / KV when the stored
+// heads repeat one, which then serves every query head. Window: the keys a local
+// layer attends, the query's own included; 0 for a global layer.
+template <int H, int K, int G, int W>
+struct Layer {
+  static constexpr int Heads = H, KV = K, Group = G, Window = W;
+};
+using E4BLocal = Layer<8, 2, 4, 512>;
+using E4BGlobal = Layer<8, 2, 4, 0>;
+using UnifiedLocal = Layer<16, 8, 2, 1024>;
+using UnifiedGlobal = Layer<16, 8, 16, 0>;  // one global K/V head, stored eight times
+
 struct Job {
-  const half* q;        // [rows, 8, 512]
-  const half* pages;    // [page, K or V, 2, 16, 512]
+  const half* q;        // [rows, Heads, 512]
+  const half* pages;    // [page, K or V, KV, 16, 512]
   const int* page_ids;  // pages of the sequence, oldest first
   const int* length;    // keys in the last page; local: then window offset and sink
-  half* output;         // [rows, 8, 512]
-  float* lse;           // [rows, 8] base-2 log-sum-exp
+  half* output;         // [rows, Heads, 512]
+  float* lse;           // [rows, Heads] base-2 log-sum-exp
   float* partial;       // [block, query, D] unnormalized outputs of a segment
   float* stat;          // [block, maximum or denominator, query]
   int rows, pages_count, segment_pages, segments, causal;
   float scale;
 };
 
+template <typename L>
 __device__ __forceinline__ const half* page(const Job& job, int index, int value, int head) {
-  return job.pages + (((int64_t)job.page_ids[index] * 2 + value) * 2 + head) * Keys * Stride;
+  return job.pages +
+         (((int64_t)job.page_ids[index] * 2 + value) * L::KV + head) * Keys * Stride;
 }
 
 // Logical keys [begin, end) of the `count` cached ones that a row attends.
-__device__ __forceinline__ void bounds(const Job& job, bool local, int row, int count, int& begin,
+__device__ __forceinline__ void bounds(const Job& job, int window, int row, int count, int& begin,
                                        int& end) {
   begin = end = 0;
   if (row >= job.rows) return;
   end = count;
   if (!job.causal) return;
-  if (local)
-    begin = max(0, count - max(512 - row - 1, 0));
+  if (window)
+    begin = max(0, count - max(window - row - 1, 0));
   else
     end = max(0, min(count, count - job.rows + row + 1));
 }
@@ -69,16 +84,18 @@ __device__ __forceinline__ void fold(const Tile& tile, float* scratch, float* ou
   __syncwarp();
 }
 
-template <int T, bool Local>
+template <int T, typename L>
 __global__ void attend(Job job) {
+  constexpr bool Local = L::Window > 0;
   constexpr int D = Local ? 256 : 512, Q = 16 * T, F = D * T / (Warps * 16), Terms = 3 - T;
+  constexpr int G = L::Group;
   __shared__ __align__(32) half queries[Q * D];           // later the V of a partial last page
   // [page of the step][tile, or term of the one tile][query][key]
   __shared__ __align__(32) half weight[Warps * 2 * 256];
   __shared__ float reduced[Warps][Q];
   __shared__ float top[Q], total[Q];
   int t = threadIdx.x, warp = t / 32, lane = t % 32, head = blockIdx.y;
-  int group = blockIdx.x / job.segments, segment = blockIdx.x % job.segments;
+  int first_row = blockIdx.x / job.segments * (Q / G), segment = blockIdx.x % job.segments;
   // A warp's two weight tiles double as its scratch outside the key loop.
   float* scratch = reinterpret_cast<float*>(weight + warp * 512);
 
@@ -88,10 +105,11 @@ __global__ void attend(Job job) {
   float scale = job.scale * 1.4426950408889634f;
 
   for (int i = t; i < Q * D; i += 256) {
-    int query = i / D, row = group * 4 * T + query / 4;
-    queries[i] = row < job.rows
-                     ? job.q[((int64_t)row * 8 + head * 4 + query % 4) * Stride + i % D]
-                     : __float2half(0.f);
+    int query = i / D, row = first_row + query / G;
+    queries[i] =
+        row < job.rows
+            ? job.q[((int64_t)row * L::Heads + head * G + query % G) * Stride + i % D]
+            : __float2half(0.f);
   }
   // Which query and key each element of a tile holds, read from a tile of indices.
   for (int i = lane; i < 256; i += 32) scratch[i] = i;
@@ -105,7 +123,7 @@ __global__ void attend(Job job) {
 #pragma unroll
     for (int tile = 0; tile < T; ++tile) {
       int begin, stop;
-      bounds(job, Local, group * 4 * T + (tile * 16 + at[i] / 16) / 4, count, begin, stop);
+      bounds(job, L::Window, first_row + (tile * 16 + at[i] / 16) / G, count, begin, stop);
       lo[tile][i] = max(begin, sink) - sink + offset;
       hi[tile][i] = max(stop, sink) - sink + offset;
     }
@@ -115,7 +133,7 @@ __global__ void attend(Job job) {
     if (slot >= lo[tile][i] && slot < hi[tile][i]) return true;
     if (slot >= sink) return false;
     int begin, stop;
-    bounds(job, Local, group * 4 * T + (tile * 16 + at[i] / 16) / 4, count, begin, stop);
+    bounds(job, L::Window, first_row + (tile * 16 + at[i] / 16) / G, count, begin, stop);
     return slot >= begin && slot < stop;
   };
   auto score = [&](Tile* s, const half* keys) {
@@ -138,7 +156,7 @@ __global__ void attend(Job job) {
 #pragma unroll
   for (int tile = 0; tile < T; ++tile) wmma::fill_fragment(best[tile], -CUDART_INF_F);
   for (int index = first + warp; index < end; index += Warps) {
-    score(s, page(job, index, 0, head));
+    score(s, page<L>(job, index, 0, head));
 #pragma unroll
     for (int tile = 0; tile < T; ++tile)
 #pragma unroll
@@ -187,7 +205,7 @@ __global__ void attend(Job job) {
   };
   for (int base = first; base < end; base += Warps) {
     if (base + warp < end) {
-      score(s, page(job, base + warp, 0, head));
+      score(s, page<L>(job, base + warp, 0, head));
 #pragma unroll
       for (int tile = 0; tile < T; ++tile)
 #pragma unroll
@@ -204,13 +222,13 @@ __global__ void attend(Job job) {
     }
     __syncthreads();
     for (int w = 0; w < Warps && base + w < end; ++w)
-      if (base + w != partial_page) values(w, page(job, base + w, 1, head), Stride);
+      if (base + w != partial_page) values(w, page<L>(job, base + w, 1, head), Stride);
     __syncthreads();
   }
   if (partial_page >= first && partial_page < end) {
     // Unused keys of the last page may hold anything, and 0 * NaN is NaN:
     // stage its V, cleared, where the queries were.
-    const half* v = page(job, partial_page, 1, head);
+    const half* v = page<L>(job, partial_page, 1, head);
     for (int i = t; i < Keys * D; i += 256)
       queries[i] = i / D < last ? v[i / D * Stride + i % D] : __float2half(0.f);
     __syncthreads();
@@ -241,9 +259,10 @@ __global__ void attend(Job job) {
   }
   // Query `query` of this block, or null for the padding of the last group.
   auto result = [&](int query) -> half* {
-    int row = group * 4 * T + query / 4;
-    return row < job.rows ? job.output + ((int64_t)row * 8 + head * 4 + query % 4) * Stride
-                          : nullptr;
+    int row = first_row + query / G;
+    return row < job.rows
+               ? job.output + ((int64_t)row * L::Heads + head * G + query % G) * Stride
+               : nullptr;
   };
 #pragma unroll
   for (int f = 0; f < F; ++f)
@@ -259,18 +278,18 @@ __global__ void attend(Job job) {
       if (half* o = result(i / 256)) o[256 + i % 256] = __float2half(0.f);
   }
   if (t < Q && result(t))
-    job.lse[(group * 4 * T + t / 4) * 8 + head * 4 + t % 4] =
+    job.lse[(first_row + t / G) * L::Heads + head * G + t % G] =
         total[t] > 0 ? top[t] + log2f(total[t]) : -50000.f;
 }
 
 // One block per query: join its segments and normalize. A query that attends
 // no key gets zero output and the empty log-sum-exp, as the TIR kernels give.
-template <int T, bool Local>
+template <int T, typename L>
 __global__ void merge(Job job, int blocks) {
-  constexpr int D = Local ? 256 : 512, Q = 16 * T;
+  constexpr int D = L::Window ? 256 : 512, Q = 16 * T, G = L::Group;
   int row = blockIdx.x, head = blockIdx.y, t = threadIdx.x;
-  int query = row % (4 * T) * 4 + head % 4;
-  int block = head / 4 * blocks + row / (4 * T) * job.segments;
+  int query = row % (Q / G) * G + head % G;
+  int block = head / G * blocks + row / (Q / G) * job.segments;
   float top = -CUDART_INF_F, sum = 0, low = 0, high = 0;
   for (int s = 0; s < job.segments; ++s) top = fmaxf(top, job.stat[(block + s) * 2 * Q + query]);
   for (int s = 0; s < job.segments; ++s) {
@@ -282,9 +301,9 @@ __global__ void merge(Job job, int blocks) {
     low += weight * partial[t];
     if constexpr (D == 512) high += weight * partial[t + 256];
   }
-  half* o = job.output + ((int64_t)row * 8 + head) * Stride;
+  half* o = job.output + ((int64_t)row * L::Heads + head) * Stride;
   o[t] = __float2half_rn(sum > 0 ? low / sum : 0.f);
   o[t + 256] = __float2half_rn(sum > 0 ? high / sum : 0.f);
-  if (t == 0) job.lse[row * 8 + head] = sum > 0 ? top + log2f(sum) : -50000.f;
+  if (t == 0) job.lse[row * L::Heads + head] = sum > 0 ? top + log2f(sum) : -50000.f;
 }
 }  // namespace xavier_paged

@@ -40,3 +40,6 @@ taskset -c 0,1 python -m mlc_llm compile "$assistant_out/mlc-chat-config.json" \
 export MLC_JP5_SINGLE_TOKEN=1 MLC_JP5_Q4_CUBLAS=1 MLC_XAVIER_Q4=1
 taskset -c 0,1 python -m mlc_llm compile "$target_out/mlc-chat-config.json" \
     --device cuda --opt "$opt" -o dist/libs/gemma4-12b-mtp-target-sm72.so
+# Token selection of the controller, on the GPU.
+nvcc -O3 -shared -Xcompiler -fPIC -arch=sm_72 scripts/xavier_mtp_runtime.cu \
+    -o dist/libs/xavier-mtp-runtime.so

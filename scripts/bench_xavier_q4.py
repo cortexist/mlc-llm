@@ -2,6 +2,7 @@
 
 import argparse
 import ctypes as C
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -12,8 +13,17 @@ p = argparse.ArgumentParser()
 p.add_argument("--library", default="dist/libs/xavier-q4-probe.so")
 p.add_argument("--output", required=True)
 p.add_argument("--repeats", type=int, default=40)
-p.add_argument("--modes", default="2,5", help="0=FP16, 1=untiled Q8, 2..5=Q8 tiles of 1/2/4/8 rows")
+p.add_argument(
+    "--modes",
+    default="2,5",
+    help="0=FP16, 1=untiled Q8, 2..5=Q8 tiles of 1/2/4/8 rows, 6..9=the same tiles by groups of 32",
+)
 p.add_argument("--rows", default="1,2,3,4")
+p.add_argument(
+    "--shapes",
+    default="20480x2560,2560x10240,262144x2560",
+    help="outputs x inputs of the matrices; the default is Nemotron's MLP and LM head",
+)
 args = p.parse_args()
 cuda = C.CDLL("libcudart.so")
 cuda.cudaMalloc.argtypes = [C.POINTER(C.c_void_p), C.c_size_t]
@@ -37,7 +47,7 @@ def allocate(array):
 
 rng = np.random.default_rng(123)
 results = []
-for n, k in [(20480, 2560), (2560, 10240), (262144, 2560)]:
+for n, k in (map(int, shape.split("x")) for shape in args.shapes.split(",")):
     w = rng.integers(0, 2**32, (n, k // 8), dtype=np.uint32)
     scales = rng.uniform(0.005, 0.02, (n, k // 32)).astype("float16")
     sample = np.linspace(0, n - 1, 128, dtype=int)
@@ -84,6 +94,8 @@ for n, k in [(20480, 2560), (2560, 10240), (262144, 2560)]:
                 ms=min(times),
                 relative_rmse=rmse,
                 max_abs_error=float(np.max(np.abs(error))),
+                # The tile of a Q8 mode chooses the outputs of a warp, not their arithmetic.
+                sha256=hashlib.sha256(y.tobytes()).hexdigest(),
             )
             results.append(row)
             Path(args.output).write_text(json.dumps(results, indent=2) + "\n")

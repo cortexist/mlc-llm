@@ -1,6 +1,7 @@
 """Python entrypoint of compilation."""
 
 import dataclasses
+import os
 from io import StringIO
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple  # noqa: UP035
@@ -128,7 +129,8 @@ def _compile(args: CompileArgs, model_config: ConfigBase):
         return {
             "total_seq_len": model_config.context_window_size,
             "seq_len": model_config.prefill_chunk_size,
-            "verify_len": 3,  # MTP: frontier plus at most two draft tokens.
+            # MTP: the frontier and the draft tokens of a round, verified in one step.
+            "verify_len": int(os.environ.get("MLC_MTP_VERIFY_LEN", "3")),
             "batch_size": getattr(model_config, "max_batch_size", 1),
         }
 

@@ -5,7 +5,8 @@ This fork runs **NVIDIA Nemotron 3.5 Bolt E4B** and **Gemma4 Unified 12B** on
 decoding and kernels suited to Xavier's Volta GPU. With every Xavier option
 enabled (November 11), Nemotron with **Gemma E4B MTP decodes at 38.94 tokens/s**
 on short prompts and **35.3 tokens/s at 9,500 tokens of context**, and
-prefills **808 tokens/s** at 910 tokens.
+prefills **808 tokens/s** at 910 tokens. Gemma4 Unified 12B with its native
+MTP assistant decodes at **26–37 tokens/s**.
 
 Based on upstream MLC-LLM `44fd06d0`. DFlash builds on
 [Lev Stambler's implementation](https://github.com/Lev-Stambler/mlc-llm--DFlash/tree/b6c7bf7d269fd4127fd1a48c478b01d9dc8ff42b).
@@ -66,6 +67,59 @@ No task-quality benchmark was run.
 
 [Build, enable and roll back](docs/deploy/xavier_nemotron_mtp.md#all-xavier-options--november-11)
 · [Per-run measurements, equivalence checks and hashes](docs/benchmarks/xavier/nemotron-mtp-full-summary.json).
+
+## Gemma4 12B with all Xavier options — November 11, 2026
+
+The attention kernels above now take the 12B layout (16 query heads, 8 stored
+K/V heads, a 1,024-token local window), and its native MTP path has additions
+of its own. Enabled together by
+[`deploy/xavier/gemma4-12b-full.conf`](deploy/xavier/gemma4-12b-full.conf):
+
+- **Tensor-core attention over the cached pages** and **vectorized expansion
+  of the 4-bit weights** for prefill: a 512-token chunk behind 3,072 cached
+  tokens takes 3.3 s instead of 16.8 s.
+- **Projections with grouped arithmetic.** The small-batch 4-bit kernel applies
+  its scales once per 32 weights instead of once per 8. A verification step of
+  four rows then costs what one row costs: 87 against 83 ms at 512 tokens of
+  context (109 against 89 ms before).
+- **A GPU-resident controller and a 4-bit assistant** that attends only the
+  valid part of its shared K/V state: a draft step takes 4 ms instead of 33 ms.
+- **Three proposals per round**, which the cheap verification rows now pay for.
+
+4K context, 128 forced outputs, one warmup and two measured repetitions,
+nothing cached. The baseline is the November 2 configuration rerun with
+current `main`; both use the same Heretic target and original QAT assistant.
+
+| 161 / 448 / 910-token fixture | 161 | 448 | 910 |
+|---|---:|---:|---:|
+| Prefill tok/s, baseline | 90.91 | 111.03 | 76.05 |
+| **Prefill tok/s, all options** | **138.34** | **202.63** | **189.90** |
+| Plain decode tok/s, baseline | 11.50 | 10.40 | 9.00 |
+| Plain decode tok/s, all options | 12.67 | 12.10 | 11.52 |
+| MTP decode tok/s, 2 proposals, baseline | 13.26 | 12.33 | 9.46 |
+| MTP decode tok/s, 2 proposals, all options | 27.26 | 29.67 | 26.78 |
+| **MTP decode tok/s, 3 proposals, all options** | **34.37** | **36.70** | **33.73** |
+
+| Short prompts, decode tok/s | Prose (64) | Code (72) | Scheduling (94) |
+|---|---:|---:|---:|
+| Plain, baseline | 11.86 | 11.87 | 11.71 |
+| Plain, all options | 12.99 | 12.99 | 12.93 |
+| MTP, 2 proposals, baseline | 11.78 | 14.18 | 11.85 |
+| MTP, 2 proposals, all options | 23.16 | 28.26 | 23.47 |
+| **MTP, 3 proposals, all options** | **25.72** | **35.07** | **26.11** |
+
+The fixture's forced continuations run past the end of a short answer and are
+easier to predict than the fresh text of the short prompts. Neither the new
+attention nor the grouped projections are bit-identical to what they replace:
+with tokens forced to the baseline's outputs, 761 of 765 predictions match the
+baseline's (the other four were near-ties, 0.01–0.16 logits apart), and 6 of
+the 12 recorded outputs with zero or two proposals are reproduced exactly; the
+others diverge after 4 to 114 tokens.
+No task-quality benchmark was run. The 12B stays an optional second model of
+the service.
+
+[Options, per-step gains and build](docs/deploy/xavier_gemma4_mtp.md#all-xavier-options--november-11-2026)
+· [Per-run measurements, equivalence checks and hashes](docs/benchmarks/xavier/gemma4-12b-mtp-full-summary.json).
 
 ## Nemotron with Gemma E4B MTP — November 7, 2026
 
@@ -229,7 +283,8 @@ history are in [the experiment record](docs/deploy/xavier_dflash.md).
 
 An experimental port of the official `Gemma4UnifiedAssistantForCausalLM` also
 supports native MTP trials with this target. See the
-[MTP implementation, validation and build instructions](docs/deploy/xavier_gemma4_mtp.md).
+[MTP implementation, validation and build instructions](docs/deploy/xavier_gemma4_mtp.md);
+its current speed is in the [November 11 section](#gemma4-12b-with-all-xavier-options--november-11-2026) above.
 It currently uses a greedy direct-VM controller with a 4K deployed context and native tool calls.
 The optional HTTP adapter keeps it resident alongside Nemotron and routes
 requests by model ID through one shared GPU queue.
@@ -246,9 +301,8 @@ same Xavier, with a 4K context, chunks of 512, one warmup and two measured
 | 448 | 109.65 | 10.59 | 16.082 s |
 | 1,768 | 50.44 | 8.73 | 49.607 s |
 
-This first port uses the fast projection kernels and generic attention;
-the Nemotron-specific attention optimizations do not apply to its different
-head layout. See [the 12B experiment](docs/deploy/xavier_gemma4_12b.md) for
+This first port uses the fast projection kernels and generic attention
+(the tensor-core attention took the 12B head layout on November 11). See [the 12B experiment](docs/deploy/xavier_gemma4_12b.md) for
 conversion/build instructions, validation and native-MTP compatibility, and
 [the saved summary](docs/benchmarks/xavier/gemma4-12b-heretic-summary.json)
 for the measured means.
@@ -265,7 +319,8 @@ compatibility investigation; these plain rates do not include speculative decodi
 - **Gemma4 support:** E4B/Nemotron with two KV heads, plus a text-only Unified
   12B port with mixed local/global KV head counts and global K=V projections.
 - **Native Unified MTP prototype:** official QAT assistant conversion, shared-KV
-  draft steps, greedy target verification, and an optional resident HTTP adapter.
+  draft steps, greedy target verification, and an optional resident HTTP adapter;
+  with a 4-bit assistant and three proposals it reaches 26–37 tok/s on the 12B.
 - **Nemotron + Gemma E4B MTP:** trained centroid-filtered vocabulary head,
   parallel top-32 selection and GPU-resident shared state; two drafts reach
   37.28 tok/s in the short-context comparison above.
@@ -273,7 +328,8 @@ compatibility investigation; these plain rates do not include speculative decodi
   FIFO GPU queue with either 12B + MTP or EmbeddingGemma 2 text embeddings;
   see the [resident switching PoC](docs/deploy/xavier_embedding_switch_poc.md).
 - **Faster projections:** one-token GEMV specialization; vectorized Q4-to-FP16 expansion +
-  cuBLAS for large prefill; native DP4A/Q8-activation kernels for 1–4 rows.
+  cuBLAS for large prefill; native DP4A/Q8-activation kernels for 1–4 rows, with
+  grouped arithmetic that makes four rows cost about what one does.
 - **DFlash execution:** target feature extraction, GPU greedy selection, cached
   draft K/V, bounded context attention, FP32 residual fixes and CUDA graphs.
 - **Faster attention:** native 256/512-wide verification; prefill skips masked

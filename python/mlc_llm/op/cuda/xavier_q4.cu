@@ -74,6 +74,57 @@ __global__ void mat_q4_tiled(const uint32_t* w, const half* scales, const uint4*
   }
 }
 
+// As mat_q4_tiled, with lanes that own groups of 32 weights instead of chunks of 8.
+// The integer dot product of a group is exact, so its two scales are applied once
+// instead of four times: about half of the arithmetic of a row.
+template <int B, int R, typename Out>
+__global__ void mat_q4_grouped(const uint4* w, const half* scales, const uint4* q,
+                               const float2* aux, Out* y, int n, int groups) {
+  constexpr uint32_t Low = 0x0f0f0f0f;
+  int lane = threadIdx.x & 31;
+  int row0 = ((blockIdx.x * blockDim.x + threadIdx.x) / 32) * R;
+  float accum[B][R] = {};
+  for (int g = lane; g < groups; g += 32) {
+    uint4 even[R], odd[R];
+    float scale[R];
+#pragma unroll
+    for (int r = 0; r < R; ++r) {
+      bool valid = row0 + r < n;
+      uint4 v = valid ? w[(row0 + r) * groups + g] : make_uint4(0, 0, 0, 0);
+      even[r] = make_uint4(v.x & Low, v.y & Low, v.z & Low, v.w & Low);
+      odd[r] = make_uint4((v.x >> 4) & Low, (v.y >> 4) & Low, (v.z >> 4) & Low, (v.w >> 4) & Low);
+      scale[r] = valid ? __half2float(scales[(row0 + r) * groups + g]) : 0;
+    }
+#pragma unroll
+    for (int b = 0; b < B; ++b) {
+      // Activations of even and odd positions alternate, a pair per chunk.
+      uint4 a = q[(b * groups + g) * 2], c = q[(b * groups + g) * 2 + 1];
+      float2 s = aux[b * groups + g];
+      int offset = -7 * int(s.y);
+#pragma unroll
+      for (int r = 0; r < R; ++r) {
+        int dot = __dp4a(int(even[r].x), int(a.x), offset);
+        dot = __dp4a(int(odd[r].x), int(a.y), dot);
+        dot = __dp4a(int(even[r].y), int(a.z), dot);
+        dot = __dp4a(int(odd[r].y), int(a.w), dot);
+        dot = __dp4a(int(even[r].z), int(c.x), dot);
+        dot = __dp4a(int(odd[r].z), int(c.y), dot);
+        dot = __dp4a(int(even[r].w), int(c.z), dot);
+        dot = __dp4a(int(odd[r].w), int(c.w), dot);
+        accum[b][r] += scale[r] * s.x * float(dot);
+      }
+    }
+  }
+#pragma unroll
+  for (int b = 0; b < B; ++b) {
+#pragma unroll
+    for (int r = 0; r < R; ++r) {
+      for (int d = 16; d; d /= 2) accum[b][r] += __shfl_down_sync(0xffffffff, accum[b][r], d);
+      if (lane == 0 && row0 + r < n) y[b * n + row0 + r] = Out(accum[b][r]);
+    }
+  }
+}
+
 template <int B, bool Q8, typename Out>
 __global__ void mat_q4(const uint32_t* w, const half* scales, const half* x, const uint32_t* q,
                        const float2* aux, Out* y, int n, int k) {
@@ -124,7 +175,26 @@ template <int B, typename Out>
 void dispatch_mode(const uint32_t* w, const half* s, const half* x, uint32_t* q, float2* aux,
                    Out* y, int n, int k, int mode, cudaStream_t stream) {
   dim3 block(128), grid((n + 3) / 4);
-  if (mode >= 2) {
+  if (mode >= 6) {
+#define GROUPED(R)                                                                      \
+  mat_q4_grouped<B, R><<<(n + 4 * R - 1) / (4 * R), 128, 0, stream>>>(                  \
+      (const uint4*)w, s, (const uint4*)q, aux, y, n, k / 32)
+    switch (mode) {
+      case 6:
+        GROUPED(1);
+        break;
+      case 7:
+        GROUPED(2);
+        break;
+      case 8:
+        GROUPED(4);
+        break;
+      case 9:
+        GROUPED(8);
+        break;
+    }
+#undef GROUPED
+  } else if (mode >= 2) {
 #define TILE(R) \
   mat_q4_tiled<B, R><<<(n + 4 * R - 1) / (4 * R), 128, 0, stream>>>(w, s, (const uint4*)q, y, n, k)
     switch (mode) {
@@ -155,7 +225,7 @@ extern "C" int xavier_q4_run(const void* w, const void* s, const void* x, void* 
   cudaStream_t stream = static_cast<cudaStream_t>(stream_ptr);
   if (mode)
     quant_q8<<<(b * (k / 32) + 3) / 4, 128, 0, stream>>>((const half*)x, (uint32_t*)q, (float2*)aux,
-                                                         k, b, mode >= 2);
+                                                         k, b, mode >= 2 && mode < 6);
 #define CALL(B, T)                                                                      \
   dispatch_mode<B, T>((const uint32_t*)w, (const half*)s, (const half*)x, (uint32_t*)q, \
                       (float2*)aux, (T*)y, n, k, mode, stream)
@@ -187,6 +257,13 @@ extern "C" int xavier_q4_run(const void* w, const void* s, const void* x, void* 
 
 namespace {
 void* data(DLTensor* t) { return static_cast<char*>(t->data) + t->byte_offset; }
+// The kernel of each row count, 1..4.
+// One row favors one output per warp; several rows amortize across eight outputs.
+constexpr int Tiled[] = {2, 5, 5, 5};
+// Grouped arithmetic; tiles as measured on the Unified 12B.
+constexpr int Grouped[] = {7, 7, 9, 8};
+
+template <const int* Modes>
 void q4_ffi(DLTensor* x, DLTensor* w, DLTensor* s, DLTensor* y, DLTensor* q, DLTensor* aux) {
   int k = x->shape[x->ndim - 1], n = w->shape[0], b = 1;
   for (int i = 0; i < x->ndim - 1; ++i) b *= x->shape[i];
@@ -195,12 +272,11 @@ void q4_ffi(DLTensor* x, DLTensor* w, DLTensor* s, DLTensor* y, DLTensor* q, DLT
       s->shape[1] != k / 32 || b < 1 || b > 4 || (y->dtype.bits != 16 && y->dtype.bits != 32))
     throw std::runtime_error("Xavier q4 requires CUDA q4f16_1, contiguous tensors and 1..4 rows");
   void* stream = TVMFFIEnvGetStream(kDLCUDA, x->device.device_id);
-  // One row favors one output per warp; several rows amortize across eight outputs.
-  int mode = b == 1 ? 2 : 5;
-  int result = xavier_q4_run(data(w), data(s), data(x), data(y), data(q), data(aux), n, k, b, mode,
-                             y->dtype.bits == 32, stream);
+  int result = xavier_q4_run(data(w), data(s), data(x), data(y), data(q), data(aux), n, k, b,
+                             Modes[b - 1], y->dtype.bits == 32, stream);
   if (result) throw std::runtime_error(cudaGetErrorString(cudaError_t(result)));
 }
 }  // namespace
-TVM_FFI_DLL_EXPORT_TYPED_FUNC(xavier_q4, q4_ffi);
+TVM_FFI_DLL_EXPORT_TYPED_FUNC(xavier_q4, q4_ffi<Tiled>);
+TVM_FFI_DLL_EXPORT_TYPED_FUNC(xavier_q4_grouped, q4_ffi<Grouped>);
 #endif

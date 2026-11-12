@@ -34,8 +34,32 @@ unset MLC_XAVIER_Q4 MLC_JP5_Q4_CUBLAS MLC_XAVIER_ATTN
 taskset -c 0,1 python -m mlc_llm compile dist/draft-16k/mlc-chat-config.json \
     --device cuda --opt "$opt" -o dist/libs/draft-cached-tc-16k-sm72.so
 unset MLC_DFLASH_CUDA_GRAPH MLC_JP5_VERIFY_THREE
+# The assistant attends the valid part of its shared K/V state only.
+export MLC_E4B_MTP_ATTN=1
 taskset -c 0,1 python -m mlc_llm compile dist/gemma4-12b-mtp-assistant-4k/mlc-chat-config.json \
     --device cuda --opt "$opt" -o dist/libs/gemma4-12b-mtp-assistant-4k-sm72.so
-export MLC_XAVIER_Q4=1 MLC_JP5_Q4_CUBLAS=1
+# The same assistant with 4-bit weights (MLC_GEMMA4_MTP_ASSISTANT=q4f16_1).
+assistant_src="$HOME/Models/gemma-4-12B-IT-QAT-Q4_0-unquantized-assistant"
+assistant_q4="$assistant_src-q4f16_1-MLC"
+if [[ ! -f "$assistant_q4/tensor-cache.json" ]]; then
+    taskset -c 0,1 python -m mlc_llm convert_weight "$assistant_src" \
+        --quantization q4f16_1 --device cpu -o "$assistant_q4"
+fi
+python -m mlc_llm gen_config "$assistant_src" \
+    --quantization q4f16_1 --conv-template gemma4_instruction \
+    --context-window-size 4096 --prefill-chunk-size 512 --max-batch-size 1 -o "$assistant_q4"
+# Small-batch projections with grouped arithmetic.
+export MLC_XAVIER_Q4=2 MLC_JP5_Q4_CUBLAS=1
+taskset -c 0,1 python -m mlc_llm compile "$assistant_q4/mlc-chat-config.json" \
+    --device cuda --opt "$opt" -o dist/libs/gemma4-12b-mtp-assistant-q4f16_1-4k-sm72.so
+unset MLC_E4B_MTP_ATTN
+# Vectorized expansion of the 4-bit weights for prefill; verification of up to
+# three proposals (MLC_GEMMA4_MTP_DRAFTS).
+export MLC_XAVIER_DEQUANT=1 MLC_MTP_VERIFY_LEN=4
 taskset -c 0,1 python -m mlc_llm compile dist/gemma4-12b-mtp-target-4k/mlc-chat-config.json \
     --device cuda --opt "$opt" -o dist/libs/gemma4-12b-mtp-target-4k-sm72.so
+# Token selection on the GPU and the attention callbacks of the 12B controller
+# (scripts/build_xavier_e4b_mtp.sh builds them as well).
+nvcc -O3 -shared -Xcompiler -fPIC -arch=sm_72 scripts/xavier_mtp_runtime.cu \
+    -o dist/libs/xavier-mtp-runtime.so
+taskset -c 0,1 python scripts/build_xavier_prefill.py --native-only

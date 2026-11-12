@@ -21,6 +21,9 @@ def main():
     p.add_argument("--model-lib", type=Path)
     p.add_argument("--draft", type=Path)
     p.add_argument("--draft-lib", type=Path)
+    p.add_argument("--runtime", type=Path, default=Path("dist/libs/xavier-mtp-runtime.so"))
+    p.add_argument("--attention", choices=["baseline", "paged"], default="baseline")
+    p.add_argument("--drafts", default="0,2", help="mtp: draft tokens per round, 0 first")
     p.add_argument("--context", type=int, default=16384)
     p.add_argument("--spec", choices=["none", "dflash", "mtp"], default="none")
     p.add_argument("--tokens", type=int, default=128)
@@ -166,11 +169,15 @@ def main():
     elif a.backend == "mtp":
         from bench_xavier_mtp import Program, Trial
 
-        trial = Trial(Program(a.model, a.model_lib), Program(a.draft, a.draft_lib))
+        if a.attention == "paged":
+            from mlc_llm.op.xavier_prefill import install
+
+            install("paged", a.model / "mlc-chat-config.json")
+        trial = Trial(Program(a.model, a.model_lib), Program(a.draft, a.draft_lib), a.runtime)
         for prompt in prompts:
             for repeat in range(-a.warmups, a.repeats):
                 plain = None
-                for width in [0, 2]:
+                for width in map(int, a.drafts.split(",")):
                     row = trial.run(prompt["tokens"], a.tokens, width, ignore_eos=True)
                     assert row["completion_tokens"] == a.tokens
                     row.update(

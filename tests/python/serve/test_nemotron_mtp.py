@@ -66,7 +66,7 @@ class Boundaries(unittest.TestCase):
             trial.builtin = lambda name: lambda *args: None
             trial.append = lambda *args: None
             trial.forward = lambda *args: (None, None)
-            trial.copy = lambda *args, **kwargs: None
+            trial.keep = lambda *args: None
             trial.argmax = lambda *args: [7]
             trial.hidden = None
             trial.states = []
@@ -87,7 +87,7 @@ class Boundaries(unittest.TestCase):
             trial.budget, trial.next_sid, trial.cache, trial.hidden = 32768, 12, None, None
             trial.builtin = lambda name: lambda *args: None
             trial.append = lambda *args: None
-            trial.copy = lambda *args, **kwargs: None
+            trial.keep = lambda *args: None
             trial.argmax = lambda *args: [7]
             calls = ([], [])
             trial.fill = lambda ids, calls=calls: calls[0].append(len(ids))

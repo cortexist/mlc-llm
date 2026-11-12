@@ -19,6 +19,9 @@ TARGET = Target(
 )
 
 
+_SCOPED = set()
+
+
 def build_tir(variant):
     """Clone the pinned factories, leaving the installed TVM sources untouched."""
     assert variant in ("bounds", "width")
@@ -120,57 +123,72 @@ def install(variant, target_config=None):
         variant = "hybrid-width"
     hybrid = variant in ("hybrid", "hybrid-width")
     tir_variant = "width" if hybrid else variant
-    module = (
-        native
-        if variant == "wmma"
-        else tvm_ffi.load_module(str(ROOT / f"dist/prefill-experiments/{tir_variant}.so"))
-    )
     key = "vm.builtin.paged_attention_kv_cache_create"
     original = tvm_ffi.get_global_func(key)
     receipt = {"variant": "paged" if paged else variant, "target_caches": 0}
+    # Query and stored K/V heads, local window, and whether the stored K/V heads
+    # of a global layer repeat its one head (Unified 12B).
+    heads, window, repeated = (8, 2), 512, 0
     if variant == "hybrid-width":
         path = Path(target_config or ROOT / "dist/target-16k/mlc-chat-config.json")
         config = json.loads(path.read_text())["model_config"]["text_config"]
-        assert (
-            config["num_attention_heads"],
-            config["num_key_value_heads"],
-            config["head_dim"],
-            config["global_head_dim"],
-        ) == (8, 2, 256, 512)
+        heads = (config["num_attention_heads"], config["num_key_value_heads"])
+        window = config["sliding_window"]
+        repeated = int(config.get("num_global_key_value_heads") == 1)
+        assert (*heads, window, repeated) in ((8, 2, 512, 0), (16, 8, 1024, 1))
+        assert (config["head_dim"], config["global_head_dim"]) == (256, 512)
         layers = config["layer_types"]
         physical_layers = config["num_hidden_layers"] - config["num_kv_shared_layers"]
         assert len(layers) == config["num_hidden_layers"] and physical_layers > 0
         assert set(layers) <= {"sliding_attention", "full_attention"}
         layout = "".join("l" if x == "sliding_attention" else "g" for x in layers[:physical_layers])
         receipt["physical_layer_layout"] = layout
+        # The attention entry points tell the callbacks their layer: once per
+        # process, whatever the number of models.
         for suffix in ("attention_with_fused_qkv", "attention_with_shared_kv", "self_attention"):
             name = "vm.builtin.attention_kv_cache_" + suffix
-            fn = tvm_ffi.get_global_func(name)
-            tvm_ffi.register_global_func(
-                name, native["wrap_layer_width"](fn, layout), override=True
-            )
+            if name not in _SCOPED:
+                fn = tvm_ffi.get_global_func(name)
+                tvm_ffi.register_global_func(name, native["wrap_layer"](fn), override=True)
+                _SCOPED.add(name)
+        ragged = native["ragged_by_layer"](layout)
+    # The TIR kernels are compiled for the E4B heads; the Unified 12B has "paged" only.
+    unified = heads == (16, 8)
+    assert paged or not unified
+    module = (
+        native
+        if variant == "wmma" or unified
+        else tvm_ffi.load_module(str(ROOT / f"dist/prefill-experiments/{tir_variant}.so"))
+    )
 
     def create(*args):
         args = list(args)
-        if tuple(map(int, args[2:6])) == (8, 2, 512, 512):
-            assert len(args) in (28, 29) and int(args[0][5]) == 512 and int(args[8]) == 0
+        if tuple(map(int, args[2:6])) == (*heads, 512, 512):
+            assert len(args) in (28, 29) and int(args[0][5]) == window and int(args[8]) == 0
             if variant == "hybrid-width":
                 assert tuple(map(int, args[1])) == (0, physical_layers)
-                assert int(args[0][2]) <= config["sliding_window"] == 512
+                assert int(args[0][2]) <= window
             for index, name in ((15, "ragged"), (16, "paged0"), (18, "paged1")):
+                if unified and index != 15:
+                    continue
                 old = args[index]
                 assert len(old) == 2 and str(old[0]) == "tirx"
                 clear = int((variant == "width" or hybrid) and index == 18)
                 candidate = native[name] if hybrid and index == 15 else module[name]
                 if variant == "hybrid-width" and index == 15:
-                    candidate = native["ragged_layer_width"]
+                    candidate = ragged
                 wrapped = native["wrap_prefill"](old[1], candidate, clear, 7 if index == 15 else 8)
                 args[index] = tvm_ffi.convert([old[0], wrapped])
             # Global and local, prefill and decode: every call over the cached pages.
             for index in (16, 17, 18, 19) if paged else ():
                 old = args[index]
                 assert len(old) == 2 and str(old[0]) == "tirx"
-                wrapped = native["wrap_paged"](old[1], int(index >= 18), index % 2)
+                local = index >= 18
+                # The query heads that share K and V, and the keys a local layer attends.
+                group = heads[0] if repeated and not local else heads[0] // heads[1]
+                wrapped = native["wrap_paged"](
+                    old[1], index % 2, *heads, group, window if local else 0
+                )
                 args[index] = tvm_ffi.convert([old[0], wrapped])
             receipt["target_caches"] += 1
             print("Prefill experiment installed:", receipt, flush=True)

@@ -1,8 +1,9 @@
 """Check the tensor-core paged attention against FP32 attention and time it against TVM.
 
-One sequence in the padded E4B cache layout, through both the prefill and the
-decode callback. Every slot that no query may attend holds NaN: unused keys of
-the last page, pages of other sequences and the padding of local heads.
+One sequence in the padded cache layout of the E4B or of the Unified 12B, through
+both the prefill and the decode callback. Every slot that no query may attend
+holds NaN: unused keys of the last page, pages of other sequences and the
+padding of local heads.
 """
 
 import argparse
@@ -21,13 +22,18 @@ from mlc_llm.op.xavier_prefill import ROOT, TARGET
 p = argparse.ArgumentParser()
 p.add_argument("--output", required=True)
 p.add_argument("--stress", action="store_true", help="Unit-scale Q/K/V")
+p.add_argument("--layout", choices=["e4b", "unified"], default="e4b")
 a = p.parse_args()
+# Query heads, stored K/V heads, local window. The Unified 12B stores the one
+# K/V head of a global layer in every cache head.
+HQ, KV, W = (8, 2, 512) if a.layout == "e4b" else (16, 8, 1024)
+G = HQ // KV
 fns = {}
 for local in (0, 1):
     fns[f"prefill{local}"] = _attention_prefill(
-        2, 8, 512, "float16", bool(local), {}, TARGET, sliding_window_size=512
+        KV, HQ, 512, "float16", bool(local), {}, TARGET, sliding_window_size=W
     )
-    fns[f"decode{local}"] = _attention_decode(2, 8, 512, "float16", bool(local), {}, TARGET)
+    fns[f"decode{local}"] = _attention_decode(KV, HQ, 512, "float16", bool(local), {}, TARGET)
 ref = tvm.compile(
     tvm_tirx.IRModule({k: v.with_attr("global_symbol", k) for k, v in fns.items()}), target=TARGET
 ).jit()
@@ -69,18 +75,24 @@ cases += [(1, 0, r, c, o, 0, 1, 1.0) for r, c, o in ((448, 512, 0), (512, 512, 3
 cases += [(1, 0, 33, 448, 7, 4, 0, 0.125), (1, 0, 3, 512, 11, 0, 0, 1.0)]
 cases += [(0, 1, 1, c, 0, 0, 0, 1.0) for c in (1, 16, 17, 513, 2000, 8256, 16000)]
 cases += [(1, 1, 1, c, o, 0, 0, 1.0) for c, o in ((1, 0), (300, 0), (512, 5), (512, 0))]
+if W == 1024:
+    cases += [(1, 0, r, c, o, 0, 1, 1.0) for r, c, o in ((3, 1024, 13), (512, 1024, 3))]
+    cases += [(1, 0, r, c, o, 0, 1, 1.0) for r, c, o in ((448, 700, 0), (17, 1024, 0))]
+    cases += [(1, 1, 1, c, o, 0, 0, 1.0) for c, o in ((1024, 5), (1024, 0), (700, 0))]
 results = []
 for local, decode, rows, count, offset, sink, causal, scale in cases:
     width = 256 if local else 512
-    q = np.zeros((rows, 8, 512), "float16")
-    q[:, :, :width] = rng.normal(0, input_std, (rows, 8, width)).astype("float16")
-    kv = rng.normal(0, input_std, (2, count, 2, width)).astype("float16")
+    q = np.zeros((rows, HQ, 512), "float16")
+    q[:, :, :width] = rng.normal(0, input_std, (rows, HQ, width)).astype("float16")
+    repeated = int(a.layout == "unified" and not local)
+    kv = rng.normal(0, input_std, (2, count, 1 if repeated else KV, width)).astype("float16")
+    kv = np.ascontiguousarray(np.broadcast_to(kv, (2, count, KV, width)))
     span = count + offset - sink
     npages = (span + 15) // 16
     pv = rng.permutation(npages + 3)[:npages].astype("int32")
-    pages = np.full((npages + 3, 2, 2, 16, 512), np.nan, "float16")
+    pages = np.full((npages + 3, 2, KV, 16, 512), np.nan, "float16")
     # Expired keys in front of a local window are real, finite data.
-    expired = rng.normal(0, input_std, (2, 2, offset, width)).astype("float16")
+    expired = rng.normal(0, input_std, (2, KV, offset, width)).astype("float16")
     for slot in range(offset):
         pages[pv[slot // 16], :, :, slot % 16, :width] = expired[:, :, slot]
     for j in range(count):
@@ -90,7 +102,7 @@ for local, decode, rows, count, offset, sink, causal, scale in cases:
     if local:
         length = np.array([[length[0]], [offset], [sink]], "int32")
     qo = tvm_tirx.runtime.empty(q.shape, "float16", dev)
-    lseo = tvm_tirx.runtime.empty((rows, 8), "float32", dev)
+    lseo = tvm_tirx.runtime.empty((rows, HQ), "float32", dev)
     inputs = [tensor(q)] + ([] if decode else [tensor(np.array([0, rows], "int32"))])
     inputs += [tensor(pages), tensor(np.array([0, npages], "int32")), tensor(pv), tensor(length)]
     inputs += [tensor(np.zeros(1, "int32")), tensor(np.arange(rows, dtype="int32")), qo, lseo]
@@ -100,26 +112,28 @@ for local, decode, rows, count, offset, sink, causal, scale in cases:
     key = np.arange(count)[None]
     seen = np.ones((rows, count), bool)
     if causal and local:
-        seen = key >= np.maximum(0, count - np.maximum(512 - row - 1, 0))
+        seen = key >= np.maximum(0, count - np.maximum(W - row - 1, 0))
     elif causal:
         seen = key < count - rows + row + 1
-    expected = np.zeros((rows, 8, 512), "float32")
-    expected_lse = np.full((rows, 8), -50000.0, "float32")
-    mask = np.repeat(seen, 4, axis=0)
+    expected = np.zeros((rows, HQ, 512), "float32")
+    expected_lse = np.full((rows, HQ), -50000.0, "float32")
+    mask = np.repeat(seen, G, axis=0)
     some = mask.any(1)
-    for head in range(2):
-        queries = q[:, head * 4 : head * 4 + 4, :width].astype("float32").reshape(rows * 4, width)
+    for head in range(KV):
+        queries = q[:, head * G : head * G + G, :width].astype("float32").reshape(rows * G, width)
         logits = queries @ kv[0, :, head].astype("float32").T * np.float32(scale)
         logits[~mask] = -np.inf
         top = np.where(some, logits.max(1, initial=-np.inf), 0)
         prob = np.exp(logits - top[:, None])
         total = np.where(some, prob.sum(1), 1)
         out = (prob / total[:, None]) @ kv[1, :, head].astype("float32")
-        expected[:, head * 4 : head * 4 + 4, :width] = out.reshape(rows, 4, width)
+        expected[:, head * G : head * G + G, :width] = out.reshape(rows, G, width)
         lse = np.where(some, (top + np.log(total)) / np.log(2), -50000.0)
-        expected_lse[:, head * 4 : head * 4 + 4] = lse.reshape(rows, 4)
+        expected_lse[:, head * G : head * G + G] = lse.reshape(rows, G)
 
-    fn = native["wrap_paged"](tvm_ffi.convert(refuse), local, decode)
+    fn = native["wrap_paged"](
+        tvm_ffi.convert(refuse), decode, HQ, KV, HQ if repeated else G, W if local else 0
+    )
     fn(*inputs)
     output, lse = qo.numpy(), lseo.numpy()
     fn(*inputs)

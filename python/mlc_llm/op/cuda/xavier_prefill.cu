@@ -12,21 +12,19 @@
 #include "xavier_prefill_kernel.cuh"
 namespace {
 // The cache callback omits layer identity. Carry it through the synchronous
-// host-side attention entrypoint; GPU launches remain asynchronous.
-thread_local int ragged_width = 512;
-struct WidthScope {
-  int previous;
-  explicit WidthScope(int width) : previous(ragged_width) { ragged_width = width; }
-  ~WidthScope() { ragged_width = previous; }
+// host-side attention entrypoint; GPU launches remain asynchronous. The layer
+// means something to the callback of its own cache only (ragged_by_layer), so
+// models with different layouts can share a process.
+thread_local int64_t current_layer = -1;
+struct LayerScope {
+  int64_t previous;
+  explicit LayerScope(int64_t layer) : previous(current_layer) { current_layer = layer; }
+  ~LayerScope() { current_layer = previous; }
 };
-tvm::ffi::Function wrap_layer_width(tvm::ffi::Function original, std::string layout) {
-  for (char c : layout)
-    if (c != 'l' && c != 'g') throw std::runtime_error("Invalid attention layer layout");
+tvm::ffi::Function wrap_layer(tvm::ffi::Function original) {
   return tvm::ffi::Function::FromPacked(
-      [original, layout](tvm::ffi::PackedArgs args, tvm::ffi::Any* result) {
-        int64_t layer = args[1].cast<int64_t>();
-        WidthScope scope(layer >= 0 && layer < static_cast<int64_t>(layout.size()) &&
-                                 layout[layer] == 'l' ? 256 : 512);
+      [original](tvm::ffi::PackedArgs args, tvm::ffi::Any* result) {
+        LayerScope scope(args[1].cast<int64_t>());
         original.CallPacked(args, result);
       });
 }
@@ -52,17 +50,19 @@ tvm::ffi::Function wrap_prefill(tvm::ffi::Function small, tvm::ffi::Function lar
 }
 }  // namespace
 TVM_FFI_DLL_EXPORT_TYPED_FUNC(wrap_prefill, wrap_prefill);
-TVM_FFI_DLL_EXPORT_TYPED_FUNC(wrap_layer_width, wrap_layer_width);
+TVM_FFI_DLL_EXPORT_TYPED_FUNC(wrap_layer, wrap_layer);
 
 namespace {
 template <bool Paged, bool Local, int D = (Local ? 256 : 512)>
 void launch_prefill(DLTensor* q, DLTensor* qi, DLTensor* k, DLTensor* v, DLTensor* ki, DLTensor* pv,
                     DLTensor* length, DLTensor* output, DLTensor* lse, int64_t causal,
                     int64_t rotary, double scale) {
+  int heads = q->shape[1], kv_heads = k->shape[Paged ? 2 : 1];
+  // E4B, or the current chunk of the Unified 12B (its cached pages take xavier_paged).
+  bool known = (heads == 8 && kv_heads == 2) || (!Paged && heads == 16 && kv_heads == 8);
   if (q->device.device_type != kDLCUDA || q->dtype.code != kDLFloat || q->dtype.bits != 16 ||
-      q->shape[2] != 512 || q->shape[1] != 8 || rotary != 0 ||
-      (Paged ? k->shape[2] != 2 || k->shape[4] != 512 : k->shape[1] != 2 || k->shape[2] != 512))
-    throw std::runtime_error("WMMA prefill requires the padded FP16 Gemma4 E4B cache");
+      q->shape[2] != 512 || !known || rotary != 0 || k->shape[Paged ? 4 : 2] != 512)
+    throw std::runtime_error("WMMA prefill requires a padded FP16 Gemma4 cache");
   int batch = qi->shape[0] - 1;
   dim3 grid((q->shape[0] + 15) / 16 + batch - 1, q->shape[1]);
   auto stream = static_cast<cudaStream_t>(TVMFFIEnvGetStream(kDLCUDA, q->device.device_id));
@@ -71,8 +71,8 @@ void launch_prefill(DLTensor* q, DLTensor* qi, DLTensor* k, DLTensor* v, DLTenso
       static_cast<half*>(tensor_data(k)), v ? static_cast<half*>(tensor_data(v)) : nullptr,
       static_cast<int*>(tensor_data(ki)), pv ? static_cast<int*>(tensor_data(pv)) : nullptr,
       length ? static_cast<int*>(tensor_data(length)) : nullptr,
-      static_cast<half*>(tensor_data(output)), static_cast<float*>(tensor_data(lse)), batch, 8, 2,
-      Paged ? k->shape[3] : 16, causal, scale);
+      static_cast<half*>(tensor_data(output)), static_cast<float*>(tensor_data(lse)), batch, heads,
+      kv_heads, Paged ? k->shape[3] : 16, causal, scale);
   auto status = cudaGetLastError();
   if (status != cudaSuccess) throw std::runtime_error(cudaGetErrorString(status));
 }
@@ -90,22 +90,29 @@ void ragged_prefill(DLTensor* q, DLTensor* qi, DLTensor* k, DLTensor* v, DLTenso
   launch_prefill<false, false>(q, qi, k, v, ki, nullptr, nullptr, output, lse, causal, rotary,
                                scale);
 }
-void ragged_layer_width(DLTensor* q, DLTensor* qi, DLTensor* k, DLTensor* v, DLTensor* ki,
-                        DLTensor* qpos, DLTensor* kpos, DLTensor* output, DLTensor* lse,
-                        int64_t causal, int64_t rotary, double rope_scale, double theta,
-                        double scale) {
-  if (ragged_width == 256)
-    launch_prefill<false, false, 256>(q, qi, k, v, ki, nullptr, nullptr, output, lse,
-                                     causal, rotary, scale);
-  else
-    ragged_prefill(q, qi, k, v, ki, qpos, kpos, output, lse, causal, rotary,
-                  rope_scale, theta, scale);
+// The current chunk of a cache whose physical layers are local ('l': 256 of the
+// 512 stored dimensions are used) or global ('g').
+tvm::ffi::Function ragged_by_layer(std::string layout) {
+  for (char c : layout)
+    if (c != 'l' && c != 'g') throw std::runtime_error("Invalid attention layer layout");
+  return tvm::ffi::Function::FromTyped(
+      [layout](DLTensor* q, DLTensor* qi, DLTensor* k, DLTensor* v, DLTensor* ki, DLTensor* qpos,
+               DLTensor* kpos, DLTensor* output, DLTensor* lse, int64_t causal, int64_t rotary,
+               double rope_scale, double theta, double scale) {
+        int64_t layer = current_layer;
+        if (layer >= 0 && layer < static_cast<int64_t>(layout.size()) && layout[layer] == 'l')
+          launch_prefill<false, false, 256>(q, qi, k, v, ki, nullptr, nullptr, output, lse, causal,
+                                           rotary, scale);
+        else
+          ragged_prefill(q, qi, k, v, ki, qpos, kpos, output, lse, causal, rotary, rope_scale,
+                         theta, scale);
+      });
 }
 }  // namespace
 TVM_FFI_DLL_EXPORT_TYPED_FUNC(paged0, paged_prefill<false>);
 TVM_FFI_DLL_EXPORT_TYPED_FUNC(paged1, paged_prefill<true>);
 TVM_FFI_DLL_EXPORT_TYPED_FUNC(ragged, ragged_prefill);
-TVM_FFI_DLL_EXPORT_TYPED_FUNC(ragged_layer_width, ragged_layer_width);
+TVM_FFI_DLL_EXPORT_TYPED_FUNC(ragged_by_layer, ragged_by_layer);
 
 namespace {
 // Scratch of the paged kernel: a 512-row chunk in groups of eight rows, or 32 key segments.
@@ -116,26 +123,30 @@ float* paged_scratch() {
     throw std::runtime_error("Cannot allocate the paged attention scratch");
   return memory;
 }
-template <int T, bool Local>
+template <int T, typename L>
 void launch_paged(const xavier_paged::Job& job, int groups, cudaStream_t stream) {
-  dim3 grid(groups * job.segments, 2);
-  xavier_paged::attend<T, Local><<<grid, 256, 0, stream>>>(job);
+  dim3 grid(groups * job.segments, L::Heads / L::Group);
+  xavier_paged::attend<T, L><<<grid, 256, 0, stream>>>(job);
   if (job.segments > 1)
-    xavier_paged::merge<T, Local><<<dim3(job.rows, 8), 256, 0, stream>>>(job, grid.x);
+    xavier_paged::merge<T, L><<<dim3(job.rows, L::Heads), 256, 0, stream>>>(job, grid.x);
 }
-// False when the call is not one sequence of the padded FP16 E4B cache.
-bool paged(bool local, DLTensor* q, DLTensor* pages, DLTensor* page_ptr, DLTensor* page_ids,
-           DLTensor* length, DLTensor* output, DLTensor* lse, int64_t causal, int64_t rotary,
-           double scale) {
+using Paged = bool(DLTensor*, DLTensor*, DLTensor*, DLTensor*, DLTensor*, DLTensor*, DLTensor*,
+                   int64_t, int64_t, double);
+// False when the call is not one sequence of the padded FP16 cache of layer kind L.
+template <typename L>
+bool paged(DLTensor* q, DLTensor* pages, DLTensor* page_ptr, DLTensor* page_ids, DLTensor* length,
+           DLTensor* output, DLTensor* lse, int64_t causal, int64_t rotary, double scale) {
   int rows = q->shape[0], count = page_ids->shape[0];
   if (q->device.device_type != kDLCUDA || q->dtype.code != kDLFloat || q->dtype.bits != 16 ||
-      q->shape[1] != 8 || q->shape[2] != 512 || pages->shape[2] != 2 || pages->shape[3] != 16 ||
-      pages->shape[4] != 512 || page_ptr->shape[0] != 2 || length->ndim != (local ? 2 : 1) ||
-      rotary != 0 || rows < 1 || rows > 512 || count < 1)
+      q->shape[1] != L::Heads || q->shape[2] != 512 || pages->shape[2] != L::KV ||
+      pages->shape[3] != 16 || pages->shape[4] != 512 || page_ptr->shape[0] != 2 ||
+      length->ndim != (L::Window ? 2 : 1) || rotary != 0 || rows < 1 || rows > 512 || count < 1)
     return false;
-  int tiles = rows > 4 ? 2 : 1, groups = (rows + 4 * tiles - 1) / (4 * tiles);
+  // A block holds 16 queries per tile, which share K and V.
+  int tiles = rows > 4 ? 2 : 1, block_rows = 16 * tiles / L::Group;
+  int groups = (rows + block_rows - 1) / block_rows;
   // Few rows leave the GPU idle unless the keys are split as well.
-  int segments = std::max(1, std::min(32 / groups, (count + 15) / 16));
+  int segments = std::max(1, std::min(64 * L::Group / L::Heads / groups, (count + 15) / 16));
   int segment_pages = ((count + segments - 1) / segments + 7) / 8 * 8;
   segments = (count + segment_pages - 1) / segment_pages;
   float* scratch = paged_scratch();
@@ -154,23 +165,39 @@ bool paged(bool local, DLTensor* q, DLTensor* pages, DLTensor* page_ptr, DLTenso
                         static_cast<int>(causal),
                         static_cast<float>(scale)};
   auto stream = static_cast<cudaStream_t>(TVMFFIEnvGetStream(kDLCUDA, q->device.device_id));
-  if (tiles == 1 && local) launch_paged<1, true>(job, groups, stream);
-  if (tiles == 1 && !local) launch_paged<1, false>(job, groups, stream);
-  if (tiles == 2 && local) launch_paged<2, true>(job, groups, stream);
-  if (tiles == 2 && !local) launch_paged<2, false>(job, groups, stream);
+  if (tiles == 1)
+    launch_paged<1, L>(job, groups, stream);
+  else
+    launch_paged<2, L>(job, groups, stream);
   auto status = cudaGetLastError();
   if (status != cudaSuccess) throw std::runtime_error(cudaGetErrorString(status));
   return true;
 }
-// A decode call has no query index pointer and no causal flag.
-tvm::ffi::Function wrap_paged(tvm::ffi::Function fallback, int64_t local, int64_t decode) {
+// The launcher of the layer kind with these numbers, among those the kernel is built for.
+template <typename... L>
+Paged* find_paged(int64_t heads, int64_t kv_heads, int64_t group, int64_t window) {
+  Paged* found = nullptr;
+  auto offer = [&](Paged* launcher, int h, int k, int g, int w) {
+    if (heads == h && kv_heads == k && group == g && window == w) found = launcher;
+  };
+  (offer(paged<L>, L::Heads, L::KV, L::Group, L::Window), ...);
+  return found;
+}
+// The numbers are those of xavier_paged::Layer. A decode call has no query index
+// pointer and no causal flag.
+tvm::ffi::Function wrap_paged(tvm::ffi::Function fallback, int64_t decode, int64_t heads,
+                              int64_t kv_heads, int64_t group, int64_t window) {
+  using namespace xavier_paged;
+  Paged* run = find_paged<E4BLocal, E4BGlobal, UnifiedLocal, UnifiedGlobal>(heads, kv_heads,
+                                                                            group, window);
+  if (!run) throw std::runtime_error("The paged attention kernel is not built for this layer");
   return tvm::ffi::Function::FromPacked(
-      [fallback, local, decode](tvm::ffi::PackedArgs args, tvm::ffi::Any* result) {
+      [fallback, run, decode](tvm::ffi::PackedArgs args, tvm::ffi::Any* result) {
         int at = decode ? 1 : 2;
         auto tensor = [&](int i) { return args[i].cast<DLTensor*>(); };
-        if (!paged(local, tensor(0), tensor(at), tensor(at + 1), tensor(at + 2), tensor(at + 3),
-                   tensor(at + 6), tensor(at + 7), decode ? 0 : args[10].cast<int64_t>(),
-                   args[decode ? 9 : 11].cast<int64_t>(), args[decode ? 12 : 14].cast<double>()))
+        if (!run(tensor(0), tensor(at), tensor(at + 1), tensor(at + 2), tensor(at + 3),
+                 tensor(at + 6), tensor(at + 7), decode ? 0 : args[10].cast<int64_t>(),
+                 args[decode ? 9 : 11].cast<int64_t>(), args[decode ? 12 : 14].cast<double>()))
           fallback.CallPacked(args, result);
       });
 }

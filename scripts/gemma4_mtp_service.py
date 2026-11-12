@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -16,6 +17,8 @@ from jinja2 import TemplateError
 class MTPChat:
     model_id = "gemma4-12b"
     context_length = 4096
+    # Proposals of a round. Three need a target built with MLC_MTP_VERIFY_LEN=4.
+    drafts = int(os.environ.get("MLC_GEMMA4_MTP_DRAFTS", "2"))
 
     def __init__(self, root):
         self.root = root
@@ -45,18 +48,33 @@ class MTPChat:
             enable_thinking=False,
             return_dict=False,
         )
+        # "paged": tensor-core attention (see mlc_llm/op/xavier_prefill.py).
+        receipt = None
+        if os.environ.get("MLC_GEMMA4_MTP_PREFILL", "baseline") != "baseline":
+            from mlc_llm.op.xavier_prefill import install
+
+            receipt = install(
+                os.environ["MLC_GEMMA4_MTP_PREFILL"],
+                self.root / "dist/gemma4-12b-mtp-target-4k/mlc-chat-config.json",
+            )
         target = Program(
             self.root / "dist/gemma4-12b-mtp-target-4k",
             self.root / "dist/libs/gemma4-12b-mtp-target-4k-sm72.so",
         )
+        # "q4f16_1": the 4-bit assistant of scripts/build_xavier_contexts.sh.
+        quantization = os.environ.get("MLC_GEMMA4_MTP_ASSISTANT", "q0f16")
+        name = "assistant" if quantization == "q0f16" else f"assistant-{quantization}"
+        models = Path.home() / "Models"
         assistant = Program(
-            Path.home() / "Models/gemma-4-12B-IT-QAT-Q4_0-unquantized-assistant-q0f16-MLC",
-            self.root / "dist/libs/gemma4-12b-mtp-assistant-4k-sm72.so",
+            models / f"gemma-4-12B-IT-QAT-Q4_0-unquantized-assistant-{quantization}-MLC",
+            self.root / f"dist/libs/gemma4-12b-mtp-{name}-4k-sm72.so",
         )
-        self.trial = Trial(target, assistant)
+        self.trial = Trial(target, assistant, self.root / "dist/libs/xavier-mtp-runtime.so")
         if self.trial.context_length != self.context_length:
             raise RuntimeError("MTP libraries do not match the advertised context capacity")
-        result = self.trial.run(prompt, 16, 2)
+        if receipt is not None and receipt["target_caches"] != 1:
+            raise RuntimeError(f"Unexpected cache installation: {receipt}")
+        result = self.trial.run(prompt, 16, self.drafts)
         text = self.tokenizer.decode(result["tokens"])
         if "391" not in text:
             raise RuntimeError("Resident MTP arithmetic warmup failed")
@@ -107,17 +125,17 @@ class MTPChat:
             enable_thinking=False,
             return_dict=False,
         )
-        remaining = self.context_length - len(prompt) - 2
+        remaining = self.context_length - len(prompt) - self.drafts
         limit = min(512, remaining) if request.max_tokens is None else request.max_tokens
         if limit < 1 or limit > remaining:
             raise ValueError(
                 f"gemma4-12b context is {self.context_length} tokens; prompt uses {len(prompt)}, "
-                f"max_tokens must be 1..{max(0, remaining)} (2 verification slots)"
+                f"max_tokens must be 1..{max(0, remaining)} ({self.drafts} verification slots)"
             )
         return prompt, limit, {t["function"]["name"] for t in tools}
 
     def generate(self, prompt, limit, allowed_names):
-        result = self.trial.run(prompt, limit, 2)
+        result = self.trial.run(prompt, limit, self.drafts)
         ids = result["tokens"]
         stopped = ids[-1] in {1, 50, 106}
         raw = self.tokenizer.decode(ids[:-1] if stopped else ids)

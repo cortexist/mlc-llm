@@ -1,6 +1,8 @@
-// E4B assistant attention over the shared K/V state, one query position.
+// Assistant attention over the shared K/V state, one query position.
 // Only the valid keys are read: the whole context for a global layer, the last
-// 513 for a local one. The state layout [1, capacity, 2, D] is read in place.
+// window + 1 for a local one. The state layout [1, capacity, K/V heads, D] is read
+// in place. Query heads go in pairs that share a K/V head: one pair per K/V head
+// in the E4B, eight pairs on the single global head of the Unified 12B.
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 #include <math_constants.h>
@@ -11,7 +13,7 @@
 #include <stdexcept>
 
 namespace {
-constexpr int KV = 2, G = 2, Tile = 64;  // K/V heads, query heads per K/V head, keys per block
+constexpr int G = 2, Tile = 64;  // query heads per block, keys per block
 
 __device__ __forceinline__ int first_key(int n, int window) {
   return window ? max(0, n - window - 1) : 0;
@@ -39,22 +41,23 @@ __device__ float block_reduce(float v, float* shared, bool maximum) {
   return v;
 }
 
-// A warp scores one key for both query heads of its K/V head; a lane owns D/32 dimensions.
+// A warp scores one key for a pair of query heads; a lane owns D/32 dimensions.
+// Block row p holds query heads 2p and 2p+1, which read K/V head p / pairs.
 template <int D>
 __global__ void score(const half* q, const half* keys, const int* length, float* scores,
-                      int capacity, int window) {
+                      int capacity, int window, int kv, int pairs) {
   constexpr int N = D / 32;
   int n = min(length[0], capacity), begin = first_key(n, window);
-  int h = blockIdx.y, lane = threadIdx.x & 31, warp = threadIdx.x / 32;
+  int p = blockIdx.y, h = p / pairs, lane = threadIdx.x & 31, warp = threadIdx.x / 32;
   float qa[N], qb[N];
 #pragma unroll
   for (int i = 0; i < N; ++i) {
-    qa[i] = __half2float(q[(h * G) * D + lane * N + i]);
-    qb[i] = __half2float(q[(h * G + 1) * D + lane * N + i]);
+    qa[i] = __half2float(q[(p * G) * D + lane * N + i]);
+    qb[i] = __half2float(q[(p * G + 1) * D + lane * N + i]);
   }
   int first = begin + blockIdx.x * Tile, last = min(n, first + Tile);
   for (int key = first + warp; key < last; key += 8) {
-    const half* k = keys + (int64_t(key) * KV + h) * D + lane * N;
+    const half* k = keys + (int64_t(key) * kv + h) * D + lane * N;
     float a = 0, b = 0;
 #pragma unroll
     for (int i = 0; i < N; ++i) {
@@ -67,8 +70,8 @@ __global__ void score(const half* q, const half* keys, const int* length, float*
       b += __shfl_xor_sync(0xffffffff, b, d);
     }
     if (lane == 0) {
-      scores[(h * G) * capacity + key] = a;
-      scores[(h * G + 1) * capacity + key] = b;
+      scores[(p * G) * capacity + key] = a;
+      scores[(p * G + 1) * capacity + key] = b;
     }
   }
 }
@@ -92,25 +95,26 @@ __global__ void normalize(const float* scores, const int* length, half* weights,
     w[key] = __float2half_rn(expf(__half2float(__float2half_rn(s[key])) - top) / sum);
 }
 
-// A block sums one tile of values for both query heads; a thread owns D/128 dimensions.
+// A block sums one tile of values for a pair of query heads; a thread owns D/128 dimensions.
 template <int D>
 __global__ void accumulate(const half* weights, const half* values, const int* length,
-                           float* partial, int capacity, int chunks, int window) {
+                           float* partial, int capacity, int chunks, int window, int kv,
+                           int pairs) {
   constexpr int N = D / 128;
   int n = min(length[0], capacity), begin = first_key(n, window);
-  int h = blockIdx.y, t = threadIdx.x;
+  int p = blockIdx.y, h = p / pairs, t = threadIdx.x;
   int first = begin + blockIdx.x * Tile, last = min(n, first + Tile);
   if (first >= last) return;
   __shared__ float w[G][Tile];
   if (t < Tile) {
 #pragma unroll
     for (int g = 0; g < G; ++g)
-      w[g][t] = first + t < last ? __half2float(weights[(h * G + g) * capacity + first + t]) : 0.f;
+      w[g][t] = first + t < last ? __half2float(weights[(p * G + g) * capacity + first + t]) : 0.f;
   }
   __syncthreads();
   float acc[G][N] = {};
   for (int key = first; key < last; ++key) {
-    const half* v = values + (int64_t(key) * KV + h) * D + t * N;
+    const half* v = values + (int64_t(key) * kv + h) * D + t * N;
 #pragma unroll
     for (int i = 0; i < N; ++i) {
       float x = __half2float(v[i]);
@@ -122,7 +126,7 @@ __global__ void accumulate(const half* weights, const half* values, const int* l
   for (int g = 0; g < G; ++g)
 #pragma unroll
     for (int i = 0; i < N; ++i)
-      partial[(int64_t(h * G + g) * chunks + blockIdx.x) * D + t * N + i] = acc[g][i];
+      partial[(int64_t(p * G + g) * chunks + blockIdx.x) * D + t * N + i] = acc[g][i];
 }
 
 // Tiles are added in key order, so the result does not depend on scheduling.
@@ -155,28 +159,33 @@ bool is(DLTensor* t, int code, int bits, std::initializer_list<int64_t> shape) {
 template <int Window>
 void attention(DLTensor* q, DLTensor* keys, DLTensor* values, DLTensor* length, DLTensor* output,
                DLTensor* scores, DLTensor* weights, DLTensor* partial) {
-  int64_t dim = q->ndim == 4 ? q->shape[3] : 0, capacity = keys->ndim == 4 ? keys->shape[1] : 0;
-  int64_t chunks = ((Window ? Window + 1 : capacity) + Tile - 1) / Tile;
-  if ((dim != 256 && dim != 512) || capacity < 1 || !is(q, kDLFloat, 16, {1, KV, G, dim}) ||
-      !is(keys, kDLFloat, 16, {1, capacity, KV, dim}) ||
-      !is(values, kDLFloat, 16, {1, capacity, KV, dim}) || !is(length, kDLInt, 32, {1}) ||
-      !is(output, kDLFloat, 16, {1, KV, G, dim}) || !is(scores, kDLFloat, 32, {KV * G, capacity}) ||
-      !is(weights, kDLFloat, 16, {KV * G, capacity}) ||
-      !is(partial, kDLFloat, 32, {KV * G, chunks, dim}))
-    throw std::runtime_error("E4B assistant attention requires FP16 [1,2,2,D] queries and "
-                             "[1,capacity,2,D] shared K/V on CUDA");
+  bool shaped = q->ndim == 4 && keys->ndim == 4;
+  int64_t kv = shaped ? q->shape[1] : 0, group = shaped ? q->shape[2] : 0;
+  int64_t dim = shaped ? q->shape[3] : 0, capacity = shaped ? keys->shape[1] : 0;
+  int64_t heads = kv * group, chunks = ((Window ? Window + 1 : capacity) + Tile - 1) / Tile;
+  if ((dim != 256 && dim != 512) || capacity < 1 || kv < 1 || group < G || group % G ||
+      !is(q, kDLFloat, 16, {1, kv, group, dim}) ||
+      !is(keys, kDLFloat, 16, {1, capacity, kv, dim}) ||
+      !is(values, kDLFloat, 16, {1, capacity, kv, dim}) || !is(length, kDLInt, 32, {1}) ||
+      !is(output, kDLFloat, 16, {1, kv, group, dim}) ||
+      !is(scores, kDLFloat, 32, {heads, capacity}) ||
+      !is(weights, kDLFloat, 16, {heads, capacity}) ||
+      !is(partial, kDLFloat, 32, {heads, chunks, dim}))
+    throw std::runtime_error("Assistant attention requires FP16 [1,H,G,D] queries with even G "
+                             "and [1,capacity,H,D] shared K/V on CUDA");
   auto stream = static_cast<cudaStream_t>(TVMFFIEnvGetStream(kDLCUDA, q->device.device_id));
-  dim3 tiles(chunks, KV);
+  int pairs = group / G;
+  dim3 tiles(chunks, heads / G);
 #define LAUNCH(D)                                                                            \
   score<D><<<tiles, 256, 0, stream>>>(data<half>(q), data<half>(keys), data<int>(length),   \
-                                      data<float>(scores), capacity, Window);               \
-  normalize<<<KV * G, 256, 0, stream>>>(data<float>(scores), data<int>(length),             \
-                                        data<half>(weights), capacity, Window);             \
+                                      data<float>(scores), capacity, Window, kv, pairs);    \
+  normalize<<<heads, 256, 0, stream>>>(data<float>(scores), data<int>(length),              \
+                                       data<half>(weights), capacity, Window);              \
   accumulate<D><<<tiles, 128, 0, stream>>>(data<half>(weights), data<half>(values),         \
                                            data<int>(length), data<float>(partial),         \
-                                           capacity, chunks, Window);                       \
-  combine<D><<<KV * G, 256, 0, stream>>>(data<float>(partial), data<int>(length),           \
-                                         data<half>(output), capacity, chunks, Window)
+                                           capacity, chunks, Window, kv, pairs);            \
+  combine<D><<<heads, 256, 0, stream>>>(data<float>(partial), data<int>(length),            \
+                                        data<half>(output), capacity, chunks, Window)
   if (dim == 256) {
     LAUNCH(256);
   } else {
@@ -188,4 +197,5 @@ void attention(DLTensor* q, DLTensor* keys, DLTensor* values, DLTensor* length, 
 }
 }  // namespace
 TVM_FFI_DLL_EXPORT_TYPED_FUNC(gemma4_mtp_attention_local, attention<512>);
+TVM_FFI_DLL_EXPORT_TYPED_FUNC(gemma4_mtp_attention_local_1024, attention<1024>);
 TVM_FFI_DLL_EXPORT_TYPED_FUNC(gemma4_mtp_attention_global, attention<0>);

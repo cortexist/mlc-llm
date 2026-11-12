@@ -1,8 +1,9 @@
-"""Greedy E4B MTP controller retaining shared KV and hidden states on CUDA.
+"""Greedy MTP controller retaining shared KV and hidden states on CUDA.
 
 This remains a direct-VM benchmark, not an MLCEngine serving mode. Compile
 xavier_mtp_runtime.cu with nvcc -O3 -shared -Xcompiler -fPIC -arch=sm_72.
-Only the selected token IDs cross back to CPU each round.
+Only the selected token IDs cross back to CPU each round. The defaults are
+the E4B shapes; bench_xavier_mtp.py sets those of the Unified 12B.
 """
 
 import ctypes
@@ -15,7 +16,17 @@ from mtp_program import Program as Program
 
 
 class Trial:
-    def __init__(self, target, assistant, runtime_library, max_sequences=1, kv_budget=None):
+    def __init__(
+        self,
+        target,
+        assistant,
+        runtime_library,
+        max_sequences=1,
+        kv_budget=None,
+        hidden_size=2560,
+        kv_heads=(2, 2),
+    ):
+        """kv_heads: K/V heads the assistant shares from local and from global layers."""
         self.target, self.assistant = target, assistant
         self.context_length = min(target.context_length, assistant.context_length)
         self.device = tvm_tirx.cuda(0)
@@ -39,14 +50,15 @@ class Trial:
         self.runtime.mtp_argmax.argtypes = (
             [ctypes.c_void_p] * 5 + [ctypes.c_int] * 2 + [ctypes.c_void_p]
         )
-        self.partial = self.tensor(np.zeros((3, 256), dtype="float32"))
-        self.indices = self.tensor(np.zeros((3, 256), dtype="int32"))
-        self.predictions = {n: self.tensor(np.zeros(n, dtype="int32")) for n in [1, 2, 3]}
+        self.partial = self.tensor(np.zeros((4, 256), dtype="float32"))
+        self.indices = self.tensor(np.zeros((4, 256), dtype="int32"))
+        self.predictions = {n: self.tensor(np.zeros(n, dtype="int32")) for n in [1, 2, 3, 4]}
+        local, shared = kv_heads
         self.states = [
-            self.tensor(np.zeros((1, self.context_length, 2, d), dtype="float16"))
-            for d in [256, 256, 512, 512]
+            self.tensor(np.zeros((1, self.context_length, heads, d), dtype="float16"))
+            for heads, d in [(local, 256), (local, 256), (shared, 512), (shared, 512)]
         ]
-        self.hidden = self.tensor(np.zeros((1, 1, 2560), dtype="float16"))
+        self.hidden = self.tensor(np.zeros((1, 1, hidden_size), dtype="float16"))
         self.position = self.tensor(np.zeros(1, dtype="int32"))
 
     def tensor(self, value):
@@ -90,14 +102,37 @@ class Trial:
         self.builtin("end_forward")(self.cache)
         return result[:6]
 
+    @staticmethod
+    def row_bytes(state):
+        """Bytes of one token in a shared K/V state [1, tokens, heads, width]."""
+        return state.shape[2] * state.shape[3] * 2
+
     def append(self, delta, committed, count):
         for dest, source in zip(self.states, delta):
-            row_bytes = 2 * dest.shape[-1] * 2
-            self.copy(dest, source, row_bytes * count, dest_offset=committed * row_bytes)
+            size = self.row_bytes(dest)
+            self.copy(dest, source, size * count, dest_offset=committed * size)
+
+    def keep(self, hidden, row):
+        """Retain the hidden state of one row for the next draft."""
+        size = self.hidden.shape[-1] * 2
+        self.copy(self.hidden, hidden, size, source_offset=row * size)
+
+    def draft(self, token, previous, assistant=None, states=None):
+        """One assistant step after `token`: the proposed token and the next hidden state.
+
+        Set self.position first; it is fixed for the round.
+        """
+        embedding = self.target.call("embed", self.tensor(np.array([token], dtype="int32")))
+        embedding = self.reshape(embedding, tvm_ffi.Shape(self.hidden.shape))
+        # An assistant with a centroid-filtered head also returns the token IDs of its logits.
+        logits, previous, *ids = (assistant or self.assistant).call(
+            "mtp_step", embedding, previous, *(states or self.states), self.position, self.position
+        )
+        return self.argmax(logits, *ids)[0], previous
 
     def run(self, prompt, count, drafts, ignore_eos=False):
-        if drafts not in [0, 1, 2] or count < 1 or not prompt:
-            raise ValueError("Expected nonempty prompt, positive output count and 0..2 drafts")
+        if drafts not in [0, 1, 2, 3] or count < 1 or not prompt:
+            raise ValueError("Expected nonempty prompt, positive output count and 0..3 drafts")
         if len(prompt) + count + drafts > self.context_length:
             raise ValueError("Request plus verification exceeds compiled context")
         self.builtin("clear")(self.cache)
@@ -108,7 +143,7 @@ class Trial:
             chunk = prompt[offset : offset + 512]
             logits, hidden, *delta = self.forward(chunk, True)
             self.append(delta, offset, len(chunk))
-        self.copy(self.hidden, hidden, 5120, source_offset=(len(chunk) - 1) * 5120)
+        self.keep(hidden, len(chunk) - 1)
         frontier = self.argmax(logits)[0]
         first = time.perf_counter()
         output = [frontier]
@@ -123,12 +158,7 @@ class Trial:
             last = frontier
             self.position.copyfrom(np.array([committed], dtype="int32"))
             for _ in range(width):
-                embedding = self.target.call("embed", self.tensor(np.array([last], dtype="int32")))
-                embedding = self.reshape(embedding, tvm_ffi.Shape([1, 1, 2560]))
-                draft_logits, previous, ids = self.assistant.call(
-                    "mtp_step", embedding, previous, *self.states, self.position, self.position
-                )
-                last = self.argmax(draft_logits, ids)[0]
+                last, previous = self.draft(last, previous)
                 proposals.append(last)
             logits, hidden, *delta = self.forward([frontier, *proposals])
             predicted = self.argmax(logits)
@@ -141,7 +171,7 @@ class Trial:
             if width - match:
                 self.builtin("popn")(self.cache, 0, width - match)
             self.append(delta, committed, keep)
-            self.copy(self.hidden, hidden, 5120, source_offset=match * 5120)
+            self.keep(hidden, match)
             frontier = predicted[match]
             for token in [*proposals[:match], frontier]:
                 output.append(token)

@@ -8,13 +8,16 @@ from pathlib import Path
 from tvm.relax.frontend import nn
 from tvm.relax.frontend.nn.exporter import Exporter
 
-_ACTIVE = ContextVar("xavier_small_batch", default=False)
+# MLC_XAVIER_Q4 selects the small-batch kernel: "1" applies the scales of a product per
+# chunk of 8 weights, "2" per group of 32. They round differently.
+_KERNELS = {"1": "xavier_q4", "2": "xavier_q4_grouped"}
+_ACTIVE = ContextVar("xavier_small_batch", default=None)
 _PREFILL = ContextVar("xavier_prefill", default=False)
 
 
 @contextmanager
 def small_batch():
-    token = _ACTIVE.set(os.environ.get("MLC_XAVIER_Q4") == "1")
+    token = _ACTIVE.set(_KERNELS.get(os.environ.get("MLC_XAVIER_Q4")))
     try:
         yield
     finally:
@@ -22,7 +25,7 @@ def small_batch():
 
 
 def enabled(config):
-    return _ACTIVE.get() and config.name == "q4f16_1"
+    return _ACTIVE.get() is not None and config.name == "q4f16_1"
 
 
 @contextmanager
@@ -35,7 +38,7 @@ def prefill():
 
 
 def dequant_enabled(config):
-    return _PREFILL.get() and not _ACTIVE.get() and config.name == "q4f16_1"
+    return _PREFILL.get() and _ACTIVE.get() is None and config.name == "q4f16_1"
 
 
 def dequant_weight(weight, scale):
@@ -86,7 +89,7 @@ def q4_linear(x, weight, scale, out_dtype=None):
 
         # Inference is selected per call below because the LM head returns FP32.
         module = nn.SourceModule(
-            {"xavier_q4": infer},
+            dict.fromkeys(_KERNELS.values(), infer),
             Path(__file__).parent / "cuda/xavier_q4.cu",
             "cu",
             compile_options=[
@@ -103,7 +106,7 @@ def q4_linear(x, weight, scale, out_dtype=None):
     shape = (*x.shape[:-1], weight.shape[0])
     k = x.shape[-1]
     result = nn.op.extern(
-        "xavier_q4",
+        _ACTIVE.get(),
         args=[x, weight, scale],
         out=[
             nn.Tensor.placeholder(shape, dtype=out_dtype or x.dtype),

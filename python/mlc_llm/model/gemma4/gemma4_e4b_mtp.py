@@ -183,7 +183,7 @@ class E4BMTPTarget(Gemma4ForConditionalGeneration):
         )
         return hidden, *states, cache
 
-    mtp_prefill = xavier.prefill()(Gemma4UnifiedMTPTarget.mtp_prefill)
+    mtp_prefill = Gemma4UnifiedMTPTarget.mtp_prefill
     mtp_verify = Gemma4UnifiedMTPTarget.mtp_verify
 
     def get_default_spec(self):

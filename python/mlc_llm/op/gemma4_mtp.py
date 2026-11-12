@@ -1,4 +1,4 @@
-"""Vocabulary selection and attention kernels for the E4B shared-KV assistant."""
+"""Vocabulary selection and attention kernels for the shared-KV assistants."""
 
 from pathlib import Path
 
@@ -20,18 +20,22 @@ def _attention_outputs(query, key, window):
 
 
 def shared_attention(query, key, value, length, window):
-    """Attend from one position to the valid keys of [1, capacity, 2, D] shared K/V.
+    """Attend from one position to the valid keys of [1, capacity, heads, D] shared K/V.
 
-    The cost follows the context length (or the window), not the capacity.
+    The query is [1, heads, query heads per K/V head, D]. The cost follows the
+    context length (or the window), not the capacity.
     """
-    if window not in (0, 512):
-        raise ValueError("The assistant attention kernel has a 512-token local window")
+    names = {0: "global", 512: "local", 1024: "local_1024"}
+    if window not in names:
+        raise ValueError("The assistant attention kernel has a 512- or 1024-token local window")
     exporter = Exporter.current()
     if not hasattr(exporter, "_gemma4_mtp_attention"):
         module = nn.SourceModule(
             {
-                "gemma4_mtp_attention_local": lambda q, k, _v, _n: _attention_outputs(q, k, 512),
-                "gemma4_mtp_attention_global": lambda q, k, _v, _n: _attention_outputs(q, k, 0),
+                f"gemma4_mtp_attention_{name}": lambda q, k, _v, _n, window=w: (
+                    _attention_outputs(q, k, window)
+                )
+                for w, name in names.items()
             },
             Path(__file__).parent / "cuda/gemma4_mtp_attention.cu",
             "cu",
@@ -40,9 +44,10 @@ def shared_attention(query, key, value, length, window):
         )
         nn.add_extern(module)
         exporter._gemma4_mtp_attention = module
-    name = "gemma4_mtp_attention_local" if window else "gemma4_mtp_attention_global"
     return nn.op.extern(
-        name, args=[query, key, value, length], out=_attention_outputs(query, key, window)
+        f"gemma4_mtp_attention_{names[window]}",
+        args=[query, key, value, length],
+        out=_attention_outputs(query, key, window),
     )[0]
 
 

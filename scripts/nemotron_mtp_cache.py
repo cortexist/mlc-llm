@@ -22,9 +22,18 @@ class CachedTrial(Trial):
     kv_only_prefill = False
 
     def __init__(
-        self, target, assistant, short_assistant, runtime_library, budget=32768, assistants=None
+        self,
+        target,
+        assistant,
+        short_assistant,
+        runtime_library,
+        budget=32768,
+        assistants=None,
+        **shapes,
     ):
-        super().__init__(target, assistant, runtime_library, max_sequences=4, kv_budget=budget)
+        super().__init__(
+            target, assistant, runtime_library, max_sequences=4, kv_budget=budget, **shapes
+        )
         # Assistants compiled for shorter contexts; none when the assistant
         # attends the valid context only (MLC_E4B_MTP_ATTN=1).
         self.buckets = {self.context_length: (assistant, self.states)}
@@ -33,8 +42,8 @@ class CachedTrial(Trial):
             self.buckets[size] = (
                 program,
                 [
-                    self.tensor(np.zeros((1, size, 2, d), dtype="float16"))
-                    for d in [256, 256, 512, 512]
+                    self.tensor(np.zeros((1, size, *state.shape[2:]), dtype="float16"))
+                    for state in self.states
                 ],
             )
         self.budget = budget
@@ -77,17 +86,15 @@ class CachedTrial(Trial):
             short_count = min(count, size - committed)
             if short_count > 0:
                 for dest, source in zip(states, delta):
-                    row_bytes = 4 * dest.shape[-1]
-                    self.copy(
-                        dest, source, row_bytes * short_count, dest_offset=committed * row_bytes
-                    )
+                    row = self.row_bytes(dest)
+                    self.copy(dest, source, row * short_count, dest_offset=committed * row)
 
     def snapshot(self, tokens, pinned=False):
         n = len(tokens)
         states = []
         for source in self.states:
-            dest = self.tensor(np.zeros((1, n, 2, source.shape[-1]), dtype="float16"))
-            self.copy(dest, source, n * 4 * source.shape[-1])
+            dest = self.tensor(np.zeros((1, n, *source.shape[2:]), dtype="float16"))
+            self.copy(dest, source, n * self.row_bytes(source))
             states.append(dest)
         record = dict(sid=self.sid, tokens=list(tokens), states=states)
         if pinned:
@@ -148,14 +155,14 @@ class CachedTrial(Trial):
             logits, hidden, *delta = self.forward(prompt[-1:])
             self.append(delta, self.committed, 1)
             self.committed += 1
-            self.copy(self.hidden, hidden, 5120)
+            self.keep(hidden, 0)
             return self.argmax(logits)[0], reuse
         for offset in range(reuse, len(prompt), 512):
             chunk = prompt[offset : offset + 512]
             logits, hidden, *delta = self.forward(chunk, True)
             self.append(delta, offset, len(chunk))
             self.committed += len(chunk)
-        self.copy(self.hidden, hidden, 5120, source_offset=(len(chunk) - 1) * 5120)
+        self.keep(hidden, len(chunk) - 1)
         return self.argmax(logits)[0], reuse
 
     def pin(self, prompt):
@@ -174,9 +181,7 @@ class CachedTrial(Trial):
         self, prompt, count, on_token, cancelled, cache_result=True, ignore_eos=False, drafts=2
     ):
         if not prompt or count < 1 or len(prompt) + count + 2 > self.context_length:
-            raise ValueError(
-                "Prompt/output exceed the 16K context, including two verification slots"
-            )
+            raise ValueError("Prompt/output exceed the context, including two verification slots")
         output = []
         accepted = proposed = rounds = 0
         reused = 0
@@ -204,14 +209,7 @@ class CachedTrial(Trial):
                     min(size for size in self.buckets if size >= self.committed)
                 ]
                 for _ in range(width):
-                    embedding = self.target.call(
-                        "embed", self.tensor(np.array([last], dtype="int32"))
-                    )
-                    embedding = self.reshape(embedding, tvm_ffi.Shape([1, 1, 2560]))
-                    logits, previous, ids = assistant.call(
-                        "mtp_step", embedding, previous, *states, self.position, self.position
-                    )
-                    last = self.argmax(logits, ids)[0]
+                    last, previous = self.draft(last, previous, assistant, states)
                     proposals.append(last)
                 logits, hidden, *delta = self.forward([frontier, *proposals])
                 predicted = self.argmax(logits)
@@ -224,7 +222,7 @@ class CachedTrial(Trial):
                 if width > match:
                     self.builtin("popn")(self.cache, self.sid, width - match)
                 self.append(delta, self.committed, keep)
-                self.copy(self.hidden, hidden, 5120, source_offset=match * 5120)
+                self.keep(hidden, match)
                 self.committed += keep
                 frontier = predicted[match]
                 accepted += match

@@ -54,7 +54,7 @@ __global__ void finish_argmax(const float* values, const int* indices, const int
 extern "C" int mtp_argmax(const float* logits, float* values, int* indices,
                           const int* ids, int* result, int rows, int width, void* stream) {
   int parts = (width+1023)/1024;
-  if (rows < 1 || rows > 3 || parts > 256 || width < 1) return int(cudaErrorInvalidValue);
+  if (rows < 1 || rows > 4 || parts > 256 || width < 1) return int(cudaErrorInvalidValue);
   partial_argmax<<<dim3(parts,rows),256,0,(cudaStream_t)stream>>>(logits,values,indices,width);
   finish_argmax<<<rows,256,0,(cudaStream_t)stream>>>(values,indices,ids,result,parts);
   return int(cudaGetLastError());
