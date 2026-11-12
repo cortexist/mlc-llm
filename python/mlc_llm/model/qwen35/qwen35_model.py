@@ -20,6 +20,7 @@ from tvm_tirx.script import tirx as T
 from mlc_llm import op as op_ext
 from mlc_llm.nn import PagedKVCache, RopeMode
 from mlc_llm.nn.rnn_state import RNNState
+from mlc_llm.op import xavier
 from mlc_llm.support import logging
 from mlc_llm.support.config import ConfigBase
 from mlc_llm.support.style import bold
@@ -455,21 +456,24 @@ class Qwen35GatedDeltaNet(nn.Module):
         state_in_layer = state.get(layer_idx, 0, (b, n_vh, K, V), "float32")
 
         # Recurrent computation via TIR kernel
-        out_recurrent, state_out_layer = op.tensor_ir_op(
-            create_gated_delta_net_func(
-                num_key_heads=n_kh,
-                num_value_heads=n_vh,
-                key_head_dim=K,
-                value_head_dim=V,
-                dtype=self.dtype,
-            ),
-            "gated_delta_net",
-            [q, k, v, gate, beta, state_in_layer],
-            [
-                Tensor.placeholder([b, s, n_vh, V], "float32"),
-                Tensor.placeholder([b, n_vh, K, V], "float32"),
-            ],
-        )
+        if xavier.gdn_enabled():
+            out_recurrent, state_out_layer = xavier.gated_delta(q, k, v, gate, beta, state_in_layer)
+        else:
+            out_recurrent, state_out_layer = op.tensor_ir_op(
+                create_gated_delta_net_func(
+                    num_key_heads=n_kh,
+                    num_value_heads=n_vh,
+                    key_head_dim=K,
+                    value_head_dim=V,
+                    dtype=self.dtype,
+                ),
+                "gated_delta_net",
+                [q, k, v, gate, beta, state_in_layer],
+                [
+                    Tensor.placeholder([b, s, n_vh, V], "float32"),
+                    Tensor.placeholder([b, n_vh, K, V], "float32"),
+                ],
+            )
 
         # Cast recurrent output back to model dtype
         out_recurrent = op.astype(out_recurrent, self.dtype)
@@ -506,23 +510,30 @@ class Qwen35GatedDeltaNet(nn.Module):
             _te_update_conv_state, "update_conv_state", [conv_state, qkv]
         )
 
-        # Depthwise conv
+        # Depthwise conv. The taps are written out: with a reduction axis the GPU schedule
+        # spends one block on every output element.
         def _te_depthwise_conv(state: te.Tensor, qkv_in: te.Tensor, weight: te.Tensor):
             ks_m1 = state.shape[1]
             seq = qkv_in.shape[1]
-            kk = te.reduce_axis((0, kernel_size), name="kk")
-            return te.compute(
-                (qkv_in.shape[0], seq, qkv_in.shape[2]),
-                lambda bi, si, di: te.sum(
+
+            def tap(bi, si, di, kk):
+                return (
                     tirx.if_then_else(
                         si + kk < ks_m1,
                         state[bi, si + kk, di],
                         qkv_in[bi, si + kk - ks_m1, di],
                     )
-                    * weight[di, 0, kk],
-                    axis=kk,
-                ),
-                name="depthwise_conv1d",
+                    * weight[di, 0, kk]
+                )
+
+            def conv(bi, si, di):
+                total = tap(bi, si, di, 0)
+                for kk in range(1, kernel_size):
+                    total = total + tap(bi, si, di, kk)
+                return total
+
+            return te.compute(
+                (qkv_in.shape[0], seq, qkv_in.shape[2]), conv, name="depthwise_conv1d"
             )
 
         result = op.tensor_expr_op(
@@ -669,7 +680,10 @@ class Qwen35LMHeadModel(nn.Module):
         self.model = Qwen35Model(config)
         self.tie_word_embeddings = config.tie_word_embeddings
         if not config.tie_word_embeddings:
-            self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+            # FP32 accumulation, as the tied head: FP16 logits near 25 are 1/64 apart and tie.
+            self.lm_head = nn.Linear(
+                config.hidden_size, config.vocab_size, bias=False, out_dtype="float32"
+            )
         self.dtype = config.dtype
         self.hidden_size = config.hidden_size
         self.num_hidden_layers = config.num_hidden_layers
@@ -712,12 +726,17 @@ class Qwen35LMHeadModel(nn.Module):
             hidden_states = op.take(hidden_states, logit_positions, axis=1)
         if self.tie_word_embeddings:
             logits = self.model.embed_tokens.lm_head_forward(hidden_states)
+        elif logit_positions is not None:
+            # One row per sequence is left: the small-batch kernel also serves prefill.
+            with xavier.small_batch():
+                logits = self.lm_head(hidden_states)
         else:
             logits = self.lm_head(hidden_states)
         if logits.dtype != "float32":
             logits = logits.astype("float32")
         return logits, paged_kv_cache, state
 
+    @xavier.prefill()
     def batch_prefill(
         self,
         input_embeds: Tensor,
@@ -727,6 +746,7 @@ class Qwen35LMHeadModel(nn.Module):
     ):
         return self._forward(input_embeds, paged_kv_cache, rnn_state, logit_positions)
 
+    @xavier.small_batch()
     def batch_decode(
         self,
         input_embeds: Tensor,
@@ -735,6 +755,7 @@ class Qwen35LMHeadModel(nn.Module):
     ):
         return self._forward(input_embeds, paged_kv_cache, rnn_state)
 
+    @xavier.small_batch()
     def batch_verify(
         self,
         input_embeds: Tensor,

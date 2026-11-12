@@ -115,3 +115,42 @@ def q4_linear(x, weight, scale, out_dtype=None):
         ],
     )
     return result[0]
+
+
+def gdn_enabled():
+    """MLC_XAVIER_GDN=1 selects the register-resident gated delta kernel."""
+    return os.environ.get("MLC_XAVIER_GDN") == "1"
+
+
+def gated_delta(q, k, v, gate, beta, state):
+    """Gated delta rule over a chunk of tokens; returns the outputs and the new state in FP32."""
+    from .extern import get_store
+
+    target = get_store().target
+    if target is not None and (target.kind.name != "cuda" or target.attrs.get("arch") != "sm_72"):
+        raise ValueError("MLC_XAVIER_GDN is restricted to sm_72")
+    if {q.dtype, k.dtype, v.dtype} != {"float16"} or {int(q.shape[-1]), int(v.shape[-1])} != {128}:
+        raise ValueError("MLC_XAVIER_GDN requires FP16 q, k, v with 128-wide heads")
+
+    def outputs(_q, _k, values, _gate, _beta, old):
+        return (
+            nn.Tensor.placeholder(values.shape, "float32"),
+            nn.Tensor.placeholder(old.shape, "float32"),
+        )
+
+    exporter = Exporter.current()
+    if not hasattr(exporter, "_xavier_gdn"):
+        module = nn.SourceModule(
+            {"xavier_gdn": outputs},
+            Path(__file__).parent / "cuda/xavier_gdn.cu",
+            "cu",
+            compile_options=[*nn.SourceModule.get_compile_options("cu"), "-arch=sm_72"],
+            compiler="nvcc",
+        )
+        nn.add_extern(module)
+        exporter._xavier_gdn = module
+    return nn.op.extern(
+        "xavier_gdn",
+        args=[q, k, v, gate, beta, state],
+        out=list(outputs(q, k, v, gate, beta, state)),
+    )

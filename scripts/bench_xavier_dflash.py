@@ -38,7 +38,7 @@ parser.add_argument(
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 assert Path(mlc_llm.__file__).resolve().is_relative_to(root / "python")
-assert Path(_LIB_PATH).resolve().is_relative_to(root / "build"), _LIB_PATH
+assert Path(_LIB_PATH).resolve().is_relative_to((root / "build").resolve()), _LIB_PATH
 prompts = {
     "chat": DESIGN_NOTE,
     "448": "Read this and reply with one word.\n" + FILLER * 13,
