@@ -5,6 +5,12 @@ decoded token and the proposals in one `verify_hold` step, keeps the proposals u
 first disagreement and adds its own next token. `commit_rows` then advances the target's
 recurrent state by the kept rows only; the draft goes back through its state history.
 
+The proposals can also come from the target checkpoint's own multi-token prediction head
+(a library built with MLC_QWEN35_MTP=1, `Program(..., mtp=True)`, no draft). The head reads
+the target's final hidden state of the last token and the token after it; its keys and
+values are one more layer of the target's attention cache, written by the target's own
+steps, so only that hidden state is kept beside the cache.
+
 One conversation stays in the models between requests. The recurrent state cannot go back,
 so a prompt is continued from one of two points: where the last answer ended, or where the
 last prompt ended (a copy of the recurrent state; the attention cache drops what follows).
@@ -39,7 +45,7 @@ def builtin(name):
 class Program:
     """One compiled model with an attention cache and a recurrent state."""
 
-    def __init__(self, model, lib, device, history):
+    def __init__(self, model, lib, device, history, mtp=False):
         executable = tvm_ffi.load_module(str(lib))
         metadata = json.loads(VirtualMachine(executable, tvm_ffi.device("cpu"))["_metadata"]())
         self.context = metadata["context_window_size"]
@@ -58,6 +64,10 @@ class Program:
         self.length = None  # tokens of the conversation; None without one
         self.anchor = None  # the same when the anchor was taken
         self.pinned = None  # tokens of the pinned block; None without one
+        # With the MTP head: the final hidden state of the last token read, the same where
+        # the anchor and the pinned block end, and those of the rows of the last `verify`.
+        self.mtp = mtp
+        self.hidden = self.anchor_hidden = self.pinned_hidden = self.rows = self.zeros = None
 
     def clear(self):
         """Drop the conversation; the pinned block stays."""
@@ -78,11 +88,17 @@ class Program:
         builtin("kv_state_add_sequence")(self.cache, self.sequence)
         builtin("kv_state_add_sequence")(self.state, LIVE)
         self.length = 0
+        if self.mtp:
+            # The first token has no token before it: the head pairs it with zeros.
+            if self.zeros is None:
+                row = self.embed([0])
+                self.zeros = self.tensor(np.zeros(tuple(row.shape)), str(row.dtype))
+            self.hidden = self.zeros
 
     def pin(self):
         """Keep what has been read as the pinned block."""
         builtin("kv_state_fork_sequence")(self.state, LIVE, PINNED, -1)
-        self.pinned = self.length
+        self.pinned, self.pinned_hidden = self.length, self.hidden
 
     def unpin(self):
         """Drop the pinned block, with a conversation that begins with it."""
@@ -98,14 +114,14 @@ class Program:
         self.clear()
         self.sequence = BLOCK
         builtin("kv_state_fork_sequence")(self.state, PINNED, LIVE, -1)
-        self.length = self.pinned
+        self.length, self.hidden = self.pinned, self.pinned_hidden
 
     def mark(self):
         """Keep the present recurrent state as the anchor."""
         if self.anchor is not None:
             builtin("kv_state_remove_sequence")(self.state, ANCHOR)
         builtin("kv_state_fork_sequence")(self.state, LIVE, ANCHOR, -1)
-        self.anchor = self.length
+        self.anchor, self.anchor_hidden = self.length, self.hidden
 
     def recall(self):
         """Go back to the anchor."""
@@ -113,12 +129,17 @@ class Program:
             builtin("kv_state_popn")(self.cache, self.sequence, self.length - self.anchor)
         builtin("kv_state_remove_sequence")(self.state, LIVE)
         builtin("kv_state_fork_sequence")(self.state, ANCHOR, LIVE, -1)
-        self.length = self.anchor
+        self.length, self.hidden = self.anchor, self.anchor_hidden
+
+    def tensor(self, values, dtype="int32"):
+        return tvm_tirx.runtime.tensor(np.array(values, dtype), device=self.device)
+
+    def embed(self, tokens):
+        embeds = self.mod["embed"](self.tensor(tokens), self.params)
+        return builtin("reshape")(embeds, Shape([1, len(tokens), embeds.shape[1]]))
 
     def forward(self, name, tokens, *extra, advance=True):
-        ids = tvm_tirx.runtime.tensor(np.array(tokens, "int32"), device=self.device)
-        embeds = self.mod["embed"](ids, self.params)
-        embeds = builtin("reshape")(embeds, Shape([1, len(tokens), embeds.shape[1]]))
+        embeds = self.embed(tokens)
         builtin("kv_state_begin_forward")(self.cache, Shape([self.sequence]), Shape([len(tokens)]))
         builtin("kv_state_begin_forward")(
             self.state, Shape([LIVE]), Shape([len(tokens) if advance else 0])
@@ -133,18 +154,32 @@ class Program:
         """The token after `tokens`."""
         for offset in range(0, len(tokens), self.chunk):
             part = tokens[offset : offset + self.chunk]
-            last = tvm_tirx.runtime.tensor(np.array([len(part) - 1], "int32"), device=self.device)
-            result = self.forward("batch_prefill", part, last)
+            last = self.tensor([len(part) - 1])
+            if self.mtp:
+                result = self.forward("mtp_prefill", part, self.hidden, last)
+                self.hidden = result[1]
+            else:
+                result = self.forward("batch_prefill", part, last)
         return int(result[0].numpy().argmax())
 
     def decode(self, token):
         """The token after `token`."""
+        if self.mtp:
+            # The head has to be given the token too, which a verification of one row does.
+            choice, held = self.verify([token])
+            self.commit(held, 1, 0)
+            return choice[0]
         return int(self.forward("batch_decode", [token])[0].numpy().argmax())
 
     def verify(self, tokens):
         """The token after each of `tokens`, and what `commit` needs; the state stays."""
-        result = self.forward("verify_hold", tokens, advance=False)
-        return result[0].numpy().reshape(len(tokens), -1).argmax(axis=1).tolist(), result[3]
+        if self.mtp:
+            result = self.forward("mtp_verify", tokens, self.hidden, advance=False)
+            self.rows, held = result[1], result[4]
+        else:
+            result = self.forward("verify_hold", tokens, advance=False)
+            held = result[3]
+        return result[0].numpy().reshape(len(tokens), -1).argmax(axis=1).tolist(), held
 
     def commit(self, held, rows, drop):
         """Keep the first `rows` rows of the last `verify` and drop the other `drop`."""
@@ -152,6 +187,22 @@ class Program:
         builtin("kv_state_begin_forward")(self.state, Shape([LIVE]), Shape([rows]))
         self.mod["commit_rows"](held, Shape([rows]), self.state)
         builtin("kv_state_end_forward")(self.state)
+        if self.mtp:
+            kept = self.rows.numpy()[:, rows - 1 : rows]
+            self.hidden = self.tensor(kept, kept.dtype)
+
+    def propose(self, token, count):
+        """`count` tokens after `token`, which is not read yet, by the MTP head."""
+        hidden, proposals = self.hidden, []
+        for _ in range(count):
+            builtin("kv_state_begin_forward")(self.cache, Shape([self.sequence]), Shape([1]))
+            result = self.mod["mtp_step"](self.embed([token]), hidden, self.cache, self.params)
+            builtin("kv_state_end_forward")(self.cache)
+            token, hidden = int(result[0].numpy().argmax()), result[1]
+            proposals.append(token)
+        # The head's cache layer took the tokens; the target reads them in `verify`.
+        builtin("kv_state_popn")(self.cache, self.sequence, count)
+        return proposals
 
     def pop(self, count, state=True):
         if count:
@@ -166,8 +217,9 @@ class Decoder:
 
     def __init__(self, target, draft=None, proposals=3):
         assert 1 <= proposals <= 3, "the small-batch kernel verifies at most four rows"
+        assert draft is None or not target.mtp, "the proposals come from one of the two"
         self.target, self.draft = target, draft
-        self.proposals = proposals if draft is not None else 0
+        self.proposals = proposals if draft is not None or target.mtp else 0
         self.context = target.context
         # (tokens read, token after them) where the last answer and the last prompt ended.
         self.live = self.anchor = None
@@ -284,9 +336,12 @@ class Decoder:
                     self.draft.decode(output[-2])
                 go = more()
                 continue
-            proposals = []
-            for _ in range(width):
-                proposals.append(self.draft.decode(proposals[-1] if proposals else output[-1]))
+            if self.draft is None:
+                proposals = self.target.propose(output[-1], width)
+            else:
+                proposals = []
+                for _ in range(width):
+                    proposals.append(self.draft.decode(proposals[-1] if proposals else output[-1]))
             choice, held = self.target.verify([output[-1], *proposals])
             match = 0
             while match < width and proposals[match] == choice[match]:
@@ -300,11 +355,12 @@ class Decoder:
                 if not go:
                     break
             self.target.commit(held, rows, width + 1 - rows)
-            # The draft has read the last token and all proposals but the last.
-            if rows > width:
-                self.draft.decode(proposals[-1])
-            else:
-                self.draft.pop(width - rows)
+            if self.draft is not None:
+                # The draft has read the last token and all proposals but the last.
+                if rows > width:
+                    self.draft.decode(proposals[-1])
+                else:
+                    self.draft.pop(width - rows)
             rounds += 1
             accepted += match
             proposed += width

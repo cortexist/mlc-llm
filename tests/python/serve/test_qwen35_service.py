@@ -36,6 +36,7 @@ class Model:
     """Stands in for a Program: remembers what its cache and its state have read."""
 
     context = 64
+    mtp = False  # the proposals of these tests come from a draft
 
     def __init__(self, rule, history):
         self.rule, self.history, self.device = rule, history, self

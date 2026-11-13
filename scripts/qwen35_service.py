@@ -1,14 +1,17 @@
-"""OpenAI chat adapter for a resident Qwen3.5 target with a small Qwen3.5 draft.
+"""OpenAI chat adapter for a resident Qwen3.5 target whose tokens are proposed by its own
+multi-token prediction head or by a small Qwen3.5 draft.
 
 Under dist/, as scripts/build_xavier_qwen35.sh leaves them:
 
   qwen35-target/  target weights and tokenizer, and the model's chat_template.jinja
-  qwen35-draft/   draft weights
+  qwen35-draft/   draft weights (not with the head)
   libs/qwen35-target-sm72.so, libs/qwen35-draft-sm72.so
 
 MLC_QWEN35_MODEL_ID  name of the model in the API (qwen3.8-27b)
+MLC_QWEN35_MTP       1: the target was converted and built with its head, which proposes;
+                     no draft is loaded (0: the draft proposes)
 MLC_QWEN35_DRAFTS    proposals of a round, 1 to 3; 0 serves the target alone (3)
-MLC_QWEN35_PREFILL   "paged": tensor-core attention for both models, which needs
+MLC_QWEN35_PREFILL   "paged": tensor-core attention for the models, which needs
                      dist/prefill-experiments/native.so (baseline: the libraries' kernels)
 
 Greedy, text only, without thinking. Text streams as it is decoded. With tools, what
@@ -99,6 +102,7 @@ def parse_output(text, tools):
 class Qwen35Chat:
     model_id = os.environ.get("MLC_QWEN35_MODEL_ID", "qwen3.8-27b")
     drafts = int(os.environ.get("MLC_QWEN35_DRAFTS", "3"))
+    head = os.environ.get("MLC_QWEN35_MTP", "0") == "1"
 
     def __init__(self, root):
         self.root = Path(root)
@@ -137,9 +141,10 @@ class Qwen35Chat:
             from mlc_llm.op.xavier_prefill import install_qwen35
 
             receipt = install_qwen35()
-        target = Program(model, dist / "libs/qwen35-target-sm72.so", device, history=1)
+        head = self.head and self.drafts > 0
+        target = Program(model, dist / "libs/qwen35-target-sm72.so", device, history=1, mtp=head)
         draft = None
-        if self.drafts:
+        if self.drafts and not head:
             draft = Program(
                 dist / "qwen35-draft",
                 dist / "libs/qwen35-draft-sm72.so",
@@ -154,7 +159,7 @@ class Qwen35Chat:
         result = self.decoder.generate(prompt, 16, self.stops)
         if "391" not in self.tokenizer.decode(result["tokens"]):
             raise RuntimeError("Resident Qwen3.5 arithmetic warmup failed")
-        # Both models take the workspace of a full prefill chunk now, before the other
+        # The models take the workspace of a full prefill chunk now, before the other
         # workers load: Xavier NvMap can reject a large late allocation.
         self.decoder.forget()
         self.decoder.generate((prompt * target.chunk)[: target.chunk], 2, ())
@@ -166,6 +171,7 @@ class Qwen35Chat:
                     "model": self.model_id,
                     "context_length": self.context_length,
                     "drafts": self.drafts,
+                    "proposer": "head" if head else "draft" if draft else None,
                     "attention": attention,
                     "accepted": result["accepted"],
                     "proposed": result["proposed"],

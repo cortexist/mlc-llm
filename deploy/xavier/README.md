@@ -26,7 +26,7 @@ The existing `nemotron:e4b` client ID is also accepted as a Nemotron alias.
 |---|---|---:|---|---|
 | `nemotron` | DFlash | 16,384 | Yes | Incremental chat; buffered tool turns |
 | `gemma4-12b` | Official QAT MTP, two proposals | 4,096 | Yes | Buffered SSE with keepalives |
-| `qwen3.8-27b` | Qwen3.8 2B draft, three proposals | 8,192 | Yes | Incremental text; a tool call when it is complete |
+| `qwen3.8-27b` | The checkpoint's MTP head, three proposals | 8,192 | Yes | Incremental text; a tool call when it is complete |
 
 `qwen3.8-27b` is served instead of `gemma4-12b` with the optional
 [`xavier-qwen35.conf`](#qwen35-in-place-of-the-12b).
@@ -146,21 +146,24 @@ needed when enabling/disabling the second model.
 
 ### Qwen3.5 in place of the 12B
 
-`xavier-qwen35.conf` makes a Qwen3.5-family model the second chat model: a large
-target decoded with a small draft of the same family, served by
-`scripts/qwen35_service.py` under the API name `qwen3.8-27b`
-(`MLC_QWEN35_MODEL_ID`). It was built and measured with Qwen3.8 27B and
-Qwen3.8 2B, both `q4f16_1`. The drop-in also unloads the 12B and d1: the pair
-holds 17.6 GiB of GPU memory with its 8,192-token context (17.1 GiB with 4,096),
-and beside Nemotron and EmbeddingGemma 2 a 32 GB Xavier is then left with about
-1.0 GiB available. Nothing that fills the page cache (a download, a conversion,
-a build) fits beside the running service.
+`xavier-qwen35.conf` makes a Qwen3.5-family model the second chat model, served
+by `scripts/qwen35_service.py` under the API name `qwen3.8-27b`
+(`MLC_QWEN35_MODEL_ID`). A large target is decoded with proposals from the
+checkpoint's own multi-token prediction (MTP) head (`MLC_QWEN35_MTP=1`, which
+the drop-in sets) or, for a checkpoint without one, from a small draft of the
+same family. It was built and measured with Qwen3.8 27B, the head of a
+fine-tune that ships it and Qwen3.8 2B as draft, all `q4f16_1`. The drop-in
+also unloads the 12B and d1: with its 8,192-token context the 27B holds
+16.2 GiB of GPU memory with its head and 17.6 GiB with the 2B (17.1 GiB with
+4,096), and beside Nemotron and EmbeddingGemma 2 a 32 GB Xavier is then left
+with about 2.4 GiB available (1.0 GiB with the 2B). Nothing that fills the
+page cache (a download, a conversion, a build) fits beside the running service.
 
-With the two converted packages, the `chat_template.jinja` of the target's
+With the converted package, the `chat_template.jinja` of the target's
 original checkpoint (MLC conversion omits it) and the service stopped:
 
 ```bash
-TARGET=~/Models/<27B package> DRAFT=~/Models/<2B package> \
+MLC_QWEN35_MTP=1 TARGET=~/Models/<27B package> \
   TEMPLATE=~/Models/<chat_template.jinja> bash scripts/build_xavier_qwen35.sh
 sudo install -m 644 deploy/xavier/xavier-qwen35.conf \
   /etc/systemd/system/mlc-nemotron.service.d/xavier-qwen35.conf
@@ -168,20 +171,29 @@ sudo systemctl daemon-reload
 sudo systemctl restart mlc-nemotron
 ```
 
-The script links the packages as `dist/qwen35-target` and `dist/qwen35-draft`
-and compiles `dist/libs/qwen35-target-sm72.so` and `dist/libs/qwen35-draft-sm72.so`
-with the Xavier kernels and an 8,192-token context (`CONTEXT`; a token costs the
-27B 64 KiB of attention cache and the 2B 12 KiB), and builds the attention
-module `dist/prefill-experiments/native.so`. The pair loads before Nemotron
-and takes the workspace of a full prefill chunk at once. Removing the drop-in and restarting
+The script links the package as `dist/qwen35-target` and compiles
+`dist/libs/qwen35-target-sm72.so` with the Xavier kernels and an 8,192-token
+context (`CONTEXT`; a token costs the 27B 64 KiB of attention cache, its head
+4 KiB and a 2B draft 12 KiB), and builds the attention module
+`dist/prefill-experiments/native.so`. The model loads before Nemotron and
+takes the workspace of a full prefill chunk at once. Removing the drop-in and restarting
 restores the previous workers; no other file of the service changes.
 
-The libraries fit any checkpoint of the same model: convert it with
+For a checkpoint without the head, leave `MLC_QWEN35_MTP=1` out of the build
+and of the drop-in and give the build `DRAFT=~/Models/<2B package>`: it then
+also links `dist/qwen35-draft` and compiles `dist/libs/qwen35-draft-sm72.so`,
+and the service loads both models.
+
+The library fits any checkpoint of the same model: convert it with
 `python -m mlc_llm convert_weight <checkpoint> --quantization q4f16_1
 --model-type qwen3_5 --device cpu -o <package>` while the service is stopped
 (the conversion of the 27B needs about 17 GB of memory and 9 minutes on two
 cores), give the package the tokenizer files and an `mlc-chat-config.json`,
-and link it as `dist/qwen35-target`.
+and link it as `dist/qwen35-target`. With `MLC_QWEN35_MTP=1` the conversion
+also takes the checkpoint's `mtp.*` tensors (228 MiB for the 27B) and writes
+every other tensor as it does without; the package's `mlc-chat-config.json`
+then has to say `"mtp_num_hidden_layers": 1` in its `model_config`, as the
+checkpoint's own configuration does.
 
 The route supports text `/v1/chat/completions`, greedy single-output generation
 without thinking (`enable_thinking=False` in the checkpoint's template), and
@@ -201,13 +213,27 @@ the 12B route refuse with the same sentence.
   streams as it is decoded, with or without declared tools. A call is held from
   its `<tool_call>` marker and sent when the answer is complete, so a partial
   call never reaches a client.
-- **Speculative decoding.** Each round the draft proposes three tokens; the
-  target scores the last token and the proposals in one four-row step
-  (`verify_hold`), keeps the proposals up to its first disagreement and adds its
-  own next token (`commit_rows`). The output is the target's greedy output: the
-  same tokens as the target alone on four 128-token answers, at 11.0–13.5 tok/s
-  against 6.1. On longer answers a near-tie of the two best logits can resolve
-  differently. `MLC_QWEN35_DRAFTS=0` serves the target alone.
+- **Speculative decoding.** Each round three tokens are proposed; the target
+  scores the last token and the proposals in one four-row step (`verify_hold`,
+  `mtp_verify` with the head), keeps the proposals up to its first disagreement
+  and adds its own next token (`commit_rows`). The output is the target's
+  greedy output; where the two best logits are nearly tied, the four-row step
+  can resolve them differently from single steps. `MLC_QWEN35_DRAFTS=0` serves
+  the target alone.
+- **MTP head.** The head is one more block of the checkpoint: from the target's
+  final hidden state of a token and the embedding of the next token it predicts
+  the token after, and fed its own output it goes on. It is compiled into the
+  target's library (`mtp_prefill`, `mtp_verify`, `mtp_step`) with its keys and
+  values as a 17th layer of the attention cache, which the target's own steps
+  write, so the decoder keeps one hidden state beside the cache and no second
+  model reads the prompt. Three proposals take 32 ms a round, against 65–77 ms
+  for three steps of the 2B. On four 128-token answers of the fine-tune the
+  head gave 11.7–17.2 tok/s (68 % of its proposals accepted), the 2B draft
+  9.3–14.8 tok/s (60 %) and the target alone 6.1 tok/s; the first token comes
+  as before (1 % later on a 3,334-token prompt, which the 2B then reads for
+  another 2.4 s). The compiled head names the same token as a NumPy reference
+  on the checkpoint's own weights at 241 of 261 positions, the others
+  near-ties of 4-bit against 16-bit weights.
 - **Conversation reuse.** One conversation stays in the models between
   requests, also across requests to the other models. The recurrent state of
   the gated delta layers cannot go back, so a new prompt continues from one of
@@ -228,7 +254,7 @@ the 12B route refuse with the same sentence.
   With a 2,540-token block, the first conversation starts after 27 s and
   another one after 1.4 s. The third copy of the state costs about 220 MiB.
 - **Attention on tensor cores.** `MLC_QWEN35_PREFILL=paged`, which the drop-in
-  sets, installs the fork's tensor-core attention kernels when the two caches
+  sets, installs the fork's tensor-core attention kernels when the caches
   are created; the libraries keep TVM's kernels, which take over without it.
   Over the cached pages they serve every call (a prefill chunk, a verification,
   a decode step), and the current chunk of a prefill has a kernel of its own.
@@ -237,7 +263,7 @@ the 12B route refuse with the same sentence.
   in 27.3 s instead of 31.5 s, 3,672 tokens behind 2,587 cached ones in 44.9 s
   instead of 68.0 s, 7,941 tokens anew in 93 s instead of 138 s; behind 6,708
   tokens a verification takes 196 ms instead of 340 ms and a decode step of the
-  draft 20 ms instead of 34 ms. Prompts of a few hundred tokens gain nothing:
+  2B draft 20 ms instead of 34 ms. Prompts of a few hundred tokens gain nothing:
   read anew, the 27B takes 161 tokens at 61 tokens/s with either set of
   kernels, 512 (one chunk, the best size) at 106 instead of 102, 1,024 at 104
   instead of 97, 2,048 at 101 instead of 88 and 4,096 at 96 instead of 75.

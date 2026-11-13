@@ -10,6 +10,11 @@
 # TEMPLATE is chat_template.jinja of the target's original checkpoint, which MLC conversion
 # does not copy. A token of CONTEXT costs the 27B target 64 KiB of attention cache and the
 # 2B draft 12 KiB.
+#
+# MLC_QWEN35_MTP=1: the target checkpoint has a multi-token prediction head and TARGET was
+# converted with the same setting (its mlc-chat-config.json says "mtp_num_hidden_layers": 1).
+# The head proposes the tokens, as one more layer of the target's library and 4 KiB a
+# token of its cache, and no draft is linked or built.
 set -euo pipefail
 source scripts/xavier/env.sh
 TARGET=${TARGET:-$HOME/Models/qwen3.8-27B-uncensored-q4f16_1-MLC}
@@ -17,11 +22,19 @@ DRAFT=${DRAFT:-$HOME/Models/qwen-3.8-2B-q4f16_1-MLC}
 TEMPLATE=${TEMPLATE:-$HOME/Models/qwen3.8-27B-chat_template.jinja}
 CONTEXT=${CONTEXT:-8192}
 CHUNK=${CHUNK:-512}
+export MLC_QWEN35_MTP=${MLC_QWEN35_MTP:-0}
 export TVM_NUM_THREADS=2 OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1
-mkdir -p dist/libs dist/qwen35-target dist/qwen35-draft
-for pair in "$TARGET:dist/qwen35-target" "$DRAFT:dist/qwen35-draft"; do
-    for item in "${pair%%:*}"/*; do
-        ln -sfn "$(realpath "$item")" "${pair##*:}/$(basename "$item")"
+names=(target)
+packages=("$TARGET")
+if [ "$MLC_QWEN35_MTP" != 1 ]; then
+    names+=(draft)
+    packages+=("$DRAFT")
+fi
+mkdir -p dist/libs
+for i in "${!names[@]}"; do
+    mkdir -p "dist/qwen35-${names[i]}"
+    for item in "${packages[i]}"/*; do
+        ln -sfn "$(realpath "$item")" "dist/qwen35-${names[i]}/$(basename "$item")"
     done
 done
 install -m 644 "$TEMPLATE" dist/qwen35-target/chat_template.jinja
@@ -31,7 +44,7 @@ export MLC_JP5_SINGLE_TOKEN=1 MLC_JP5_Q4_CUBLAS=1 MLC_XAVIER_Q4=2 MLC_XAVIER_DEQ
 export MLC_XAVIER_GDN=1 MLC_MTP_VERIFY_LEN=4
 opt='flashinfer=0;cublas_gemm=1;faster_transformer=0;cudagraph=0;cutlass=1'
 overrides="context_window_size=$CONTEXT;prefill_chunk_size=$CHUNK;max_batch_size=1"
-for name in target draft; do
+for name in "${names[@]}"; do
     taskset -c 0,1 python -m mlc_llm compile "dist/qwen35-$name/mlc-chat-config.json" \
         --device cuda --opt "$opt" --overrides "$overrides" -o "dist/libs/qwen35-$name-sm72.so"
 done

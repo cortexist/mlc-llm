@@ -5,6 +5,7 @@ Implementation for Qwen3.5 GatedDeltaNet hybrid architecture.
 
 import dataclasses
 import math
+import os
 from functools import partial
 from typing import Any, Dict, List, Optional, Tuple  # noqa: UP035
 
@@ -52,6 +53,8 @@ class Qwen35Config(ConfigBase):
     linear_conv_kernel_dim: int = 4
     full_attention_interval: int = 4
     partial_rotary_factor: float = 0.25
+    # Blocks of the checkpoint's multi-token prediction head (see `mtp_enabled`)
+    mtp_num_hidden_layers: int = 0
     # Runtime
     context_window_size: int = 0
     prefill_chunk_size: int = 0
@@ -133,6 +136,20 @@ class Qwen35Config(ConfigBase):
         return types
 
 
+def mtp_enabled(config: Qwen35Config) -> bool:
+    """MLC_QWEN35_MTP=1 builds the checkpoint's multi-token prediction head into the model.
+
+    Weight conversion and compilation both need it: the head adds parameters (`mtp.*` of
+    the checkpoint) and, in a library with held verification (MLC_XAVIER_GDN=1), the
+    functions `mtp_prefill`, `mtp_verify` and `mtp_step`.
+    """
+    if os.environ.get("MLC_QWEN35_MTP") != "1":
+        return False
+    if config.mtp_num_hidden_layers != 1:
+        raise ValueError("MLC_QWEN35_MTP=1 needs a checkpoint with one MTP block")
+    return True
+
+
 ACT2FN = {
     "gelu": partial(nn.gelu, approximate=False),
     "relu": nn.relu,
@@ -187,7 +204,8 @@ class Qwen35Attention(nn.Module):
         self.q_norm = nn.RMSNorm(config.head_dim, -1, config.rms_norm_eps, bias=False)
         self.k_norm = nn.RMSNorm(config.head_dim, -1, config.rms_norm_eps, bias=False)
 
-    def forward(self, hidden_states: Tensor, paged_kv_cache: PagedKVCache, layer_id: int):
+    def attend(self, hidden_states: Tensor, paged_kv_cache: PagedKVCache, layer_id: int):
+        """Attention output before its gate, and the gate; stores the keys and values."""
         d, h_q, h_kv = self.head_dim, self.num_attention_heads, self.num_key_value_heads
         b, s, _ = hidden_states.shape
         # c_attn outputs flat: [Q_with_gate (h_q * 2 * d), K (h_kv * d), V (h_kv * d)]
@@ -211,6 +229,10 @@ class Qwen35Attention(nn.Module):
             ),
             (b, s, h_q * d),
         )
+        return output, gate
+
+    def forward(self, hidden_states: Tensor, paged_kv_cache: PagedKVCache, layer_id: int):
+        output, gate = self.attend(hidden_states, paged_kv_cache, layer_id)
         # Apply output gate: sigmoid(gate) * attn_output
         output = output * op.sigmoid(gate)
         return self.o_proj(output)
@@ -608,13 +630,20 @@ class Qwen35GatedDeltaNet(nn.Module):
 
 
 class Qwen35DecoderLayer(nn.Module):
-    def __init__(self, config: Qwen35Config, layer_id: int, category_id: int):
+    def __init__(
+        self,
+        config: Qwen35Config,
+        layer_id: int,
+        category_id: int,
+        layer_type: Optional[str] = None,
+    ):
         """
         layer_id is the id of the layer within all of the layers
         category_id is the index of the layer within the category of layers that it belongs to
         ie, linear attention or regular attention
+        layer_type is given for a layer outside the model's own (the MTP block)
         """
-        self.layer_type = config.layer_types()[layer_id]
+        self.layer_type = layer_type or config.layer_types()[layer_id]
         if self.layer_type == "full_attention":
             self.self_attn = Qwen35Attention(config)
         else:
@@ -680,10 +709,70 @@ class Qwen35Model(nn.Module):
         return hidden_states, state
 
 
+class Qwen35MTP(nn.Module):
+    """The checkpoint's multi-token prediction head.
+
+    One attention block reads, for every token, the token's embedding joined with the
+    model's final hidden state of the token before it. Its output takes the place of the
+    model's final hidden state of that token: through the LM head it predicts the token
+    after, and joined with that token's embedding it gives the next prediction. The block
+    keeps its keys and values in the attention cache layer after the model's own.
+    """
+
+    def __init__(self, config: Qwen35Config):
+        size = config.hidden_size
+        self.pre_fc_norm_embedding = nn.RMSNorm(size, -1, config.rms_norm_eps, bias=False)
+        self.pre_fc_norm_hidden = nn.RMSNorm(size, -1, config.rms_norm_eps, bias=False)
+        self.fc = nn.Linear(2 * size, size, bias=False)
+        self.layers = nn.ModuleList(
+            [Qwen35DecoderLayer(config, 0, config.num_attention_layers, "full_attention")]
+        )
+        self.norm = nn.RMSNorm(size, -1, config.rms_norm_eps, bias=False)
+
+    def join(self, embeds: Tensor, hidden: Tensor):
+        """Input of the block: embeddings of tokens, final hidden states of the tokens before."""
+        embeds = self.pre_fc_norm_embedding(embeds)
+        hidden = self.pre_fc_norm_hidden(hidden)
+        return self.fc(op.concat([embeds, hidden], dim=-1))
+
+    def store(self, embeds: Tensor, hidden: Tensor, paged_kv_cache: PagedKVCache):
+        """Keys and values of rows the model has read; nothing is predicted.
+
+        The attention output is returned for the caller to return: a cache call whose
+        result is unused is removed from the graph.
+        """
+        layer = self.layers[0]
+        output, _ = layer.self_attn.attend(
+            layer.input_layernorm(self.join(embeds, hidden)), paged_kv_cache, layer.category_id
+        )
+        return output
+
+    def forward(self, embeds: Tensor, hidden: Tensor, paged_kv_cache: PagedKVCache):
+        """What stands for the model's final hidden states of the tokens."""
+        hidden, _ = self.layers[0].forward(self.join(embeds, hidden), paged_kv_cache, None)
+        return self.norm(hidden)
+
+
+def _hidden_before(prev_hidden: Tensor, hidden_states: Tensor):
+    """For every row the final hidden state of the row before; `prev_hidden` for the first."""
+
+    def compute(prev: te.Tensor, hidden: te.Tensor):
+        return te.compute(
+            hidden.shape,
+            lambda b, i, j: tirx.if_then_else(
+                i == 0, prev[b, 0, j], hidden[b, tirx.max(i - 1, 0), j]
+            ),
+            name="mtp_hidden_before",
+        )
+
+    return op.tensor_expr_op(compute, "mtp_hidden_before", [prev_hidden, hidden_states])
+
+
 class Qwen35LMHeadModel(nn.Module):
     def __init__(self, config: Qwen35Config):
         self.config = config
         self.model = Qwen35Model(config)
+        self.mtp = Qwen35MTP(config) if mtp_enabled(config) else None
         self.tie_word_embeddings = config.tie_word_embeddings
         if not config.tie_word_embeddings:
             # FP32 accumulation, as the tied head: FP16 logits near 25 are 1/64 apart and tie.
@@ -728,18 +817,22 @@ class Qwen35LMHeadModel(nn.Module):
         """Shared forward for batch methods using RNNState."""
         op_ext.configure()
         hidden_states, state = self.model.forward(input_embed, paged_kv_cache, state)
-        head = self.model.embed_tokens.lm_head_forward if self.tie_word_embeddings else self.lm_head
         if logit_positions is not None:
             hidden_states = op.take(hidden_states, logit_positions, axis=1)
             # One row per sequence is left: the small-batch kernel also serves prefill, and
             # a tied head does not expand the embedding table for it.
             with xavier.small_batch():
-                logits = head(hidden_states)
+                logits = self._logits(hidden_states)
         else:
-            logits = head(hidden_states)
+            logits = self._logits(hidden_states)
+        return logits, paged_kv_cache, state
+
+    def _logits(self, hidden_states: Tensor):
+        head = self.model.embed_tokens.lm_head_forward if self.tie_word_embeddings else self.lm_head
+        logits = head(hidden_states)
         if logits.dtype != "float32":
             logits = logits.astype("float32")
-        return logits, paged_kv_cache, state
+        return logits
 
     @xavier.prefill()
     def batch_prefill(
@@ -785,6 +878,66 @@ class Qwen35LMHeadModel(nn.Module):
                 input_embeds, paged_kv_cache, rnn_state
             )
         return logits, paged_kv_cache, rnn_state, op.concat(held, dim=0)
+
+    @xavier.prefill()
+    def mtp_prefill(
+        self,
+        input_embeds: Tensor,
+        prev_hidden: Tensor,
+        logit_positions: Tensor,
+        paged_kv_cache: PagedKVCache,
+        rnn_state: RNNState,
+    ):
+        """`batch_prefill` that also gives the rows to the MTP head.
+
+        `prev_hidden` is the final hidden state of the token before the rows (zeros at the
+        start of a sequence). Returns the logits, the final hidden state at
+        `logit_positions`, the two states and a tensor of no use (`Qwen35MTP.store`).
+        """
+        op_ext.configure()
+        hidden_states, rnn_state = self.model.forward(input_embeds, paged_kv_cache, rnn_state)
+        stored = self.mtp.store(
+            input_embeds, _hidden_before(prev_hidden, hidden_states), paged_kv_cache
+        )
+        last = op.take(hidden_states, logit_positions, axis=1)
+        with xavier.small_batch():
+            logits = self._logits(last)
+        stored = op.take(stored, logit_positions, axis=1)
+        return logits, last, paged_kv_cache, rnn_state, stored
+
+    @xavier.small_batch()
+    def mtp_verify(
+        self,
+        input_embeds: Tensor,
+        prev_hidden: Tensor,
+        paged_kv_cache: PagedKVCache,
+        rnn_state: RNNState,
+    ):
+        """`verify_hold` that also gives the rows to the MTP head.
+
+        Returns the logits, the final hidden states of the rows, the two states, what
+        `commit_rows` needs and a tensor of no use (`Qwen35MTP.store`).
+        """
+        with xavier.hold_rows() as held:
+            op_ext.configure()
+            hidden_states, rnn_state = self.model.forward(input_embeds, paged_kv_cache, rnn_state)
+        stored = self.mtp.store(
+            input_embeds, _hidden_before(prev_hidden, hidden_states), paged_kv_cache
+        )
+        logits = self._logits(hidden_states)
+        return logits, hidden_states, paged_kv_cache, rnn_state, op.concat(held, dim=0), stored
+
+    @xavier.small_batch()
+    def mtp_step(self, input_embeds: Tensor, hidden: Tensor, paged_kv_cache: PagedKVCache):
+        """A proposal of the MTP head: the logits after one token that the model has not read.
+
+        `hidden` is the model's final hidden state of the token before it, or what the step
+        before returned beside the logits. Only the head's cache layer takes the token, so
+        the caller removes it from the cache before the model reads on.
+        """
+        op_ext.configure()
+        hidden = self.mtp(input_embeds, hidden, paged_kv_cache)
+        return self._logits(hidden), hidden, paged_kv_cache
 
     def commit_rows(self, held: Tensor, rows: tirx.Var, rnn_state: RNNState):
         """Advance the recurrent state by the first `rows` rows of the last `verify_hold`."""
@@ -850,8 +1003,8 @@ class Qwen35LMHeadModel(nn.Module):
             prefill_chunk_size=prefill_chunk_size,
             page_size=page_size,
             support_sliding_window=support_sliding_window,
-            # Only attention layers use the KV cache
-            num_hidden_layers=self.num_attention_layers,
+            # Only attention layers use the KV cache; the MTP block takes one more.
+            num_hidden_layers=self.num_attention_layers + (self.mtp is not None),
             num_attention_heads=self.num_attention_heads // self.tensor_parallel_shards,
             num_key_value_heads=self.num_key_value_heads // self.tensor_parallel_shards,
             qk_head_dim=self.head_dim,
@@ -939,5 +1092,33 @@ class Qwen35LMHeadModel(nn.Module):
                     "param_mode": "none",
                     "effect_mode": "none",
                 },
+            }
+        if self.mtp is not None and xavier.gdn_enabled():
+
+            def rows(length):
+                return nn.spec.Tensor([1, length, self.hidden_size], self.dtype)
+
+            def states(*names):
+                kinds = {"paged_kv_cache": PagedKVCache, "rnn_state": RNNState}
+                return {
+                    **{name: nn.spec.Object(object_type=kinds[name]) for name in names},
+                    "$": {"param_mode": "packed", "effect_mode": "none"},
+                }
+
+            mod_spec["mtp_prefill"] = {
+                "input_embeds": rows("seq_len"),
+                "prev_hidden": rows(1),
+                "logit_positions": nn.spec.Tensor(["batch_size"], "int32"),
+                **states("paged_kv_cache", "rnn_state"),
+            }
+            mod_spec["mtp_verify"] = {
+                "input_embeds": rows("verify_len"),
+                "prev_hidden": rows(1),
+                **states("paged_kv_cache", "rnn_state"),
+            }
+            mod_spec["mtp_step"] = {
+                "input_embeds": rows(1),
+                "hidden": rows(1),
+                **states("paged_kv_cache"),
             }
         return nn.spec.ModuleSpec.from_raw(mod_spec, self)

@@ -1,7 +1,8 @@
 """Weight mapping from Hugging Face to MLC for the Qwen3.5 text model.
 
 Hugging Face stores the text weights under model.language_model, the MLC text model
-under model. Q, K and V are fused into c_attn and gate and up into gate_up_proj.
+under model. Q, K and V are fused into c_attn and gate and up into gate_up_proj. The
+multi-token prediction head, when the model is built with it, is mtp in both.
 """
 
 import functools
@@ -50,10 +51,16 @@ def map_language_model(  # pylint: disable=too-many-locals
         return functools.partial(lambda x, dtype: x.astype(dtype), dtype=dtype)
 
     layer_types = model_config.layer_types()
-    for i in range(model_config.num_hidden_layers):
-        if layer_types[i] == "full_attention":
-            mlc_attn = f"{mlc}.layers.{i}.self_attn"
-            hf_attn = f"{hf}.layers.{i}.self_attn"
+    # The block of the MTP head is one more full-attention layer, under a prefix of its own.
+    blocks = [
+        (f"{mlc}.layers.{i}", f"{hf}.layers.{i}", layer_types[i])
+        for i in range(model_config.num_hidden_layers)
+    ]
+    blocks.append(("mtp.layers.0", "mtp.layers.0", "full_attention"))
+    for mlc_layer, hf_layer, layer_type in blocks:
+        if layer_type == "full_attention":
+            mlc_attn = f"{mlc_layer}.self_attn"
+            hf_attn = f"{hf_layer}.self_attn"
             mlc_name = f"{mlc_attn}.c_attn.weight"
             if mlc_name in named_parameters:
                 mapping.add_mapping(
@@ -65,8 +72,8 @@ def map_language_model(  # pylint: disable=too-many-locals
                     ),
                 )
         else:
-            mlc_lin = f"{mlc}.layers.{i}.linear_attn"
-            hf_lin = f"{hf}.layers.{i}.linear_attn"
+            mlc_lin = f"{mlc_layer}.linear_attn"
+            hf_lin = f"{hf_layer}.linear_attn"
             # A_log and dt_bias carry no .weight suffix, and conv1d is stored flat.
             for mlc_suffix, hf_suffix in [
                 ("in_proj_qkv.weight", "in_proj_qkv.weight"),
@@ -82,11 +89,11 @@ def map_language_model(  # pylint: disable=too-many-locals
                         cast(named_parameters[mlc_name].dtype),
                     )
 
-        mlc_name = f"{mlc}.layers.{i}.mlp.gate_up_proj.weight"
+        mlc_name = f"{mlc_layer}.mlp.gate_up_proj.weight"
         if mlc_name in named_parameters:
             mapping.add_mapping(
                 mlc_name,
-                [f"{hf}.layers.{i}.mlp.{p}_proj.weight" for p in ("gate", "up")],
+                [f"{hf_layer}.mlp.{p}_proj.weight" for p in ("gate", "up")],
                 functools.partial(
                     lambda gate, up, dtype: np.concatenate([gate, up], axis=0).astype(dtype),
                     dtype=named_parameters[mlc_name].dtype,
@@ -106,6 +113,12 @@ def map_remaining(mapping: ExternMapping, named_parameters: dict, mlc_to_hf, mlc
         "q_norm.weight",
         "k_norm.weight",
     )
+    whole = (
+        f"{mlc}.norm.weight",
+        "mtp.norm.weight",
+        "mtp.pre_fc_norm_embedding.weight",
+        "mtp.pre_fc_norm_hidden.weight",
+    )
 
     def cast(x, dtype):
         return x.astype(dtype)
@@ -116,7 +129,7 @@ def map_remaining(mapping: ExternMapping, named_parameters: dict, mlc_to_hf, mlc
     for mlc_name, mlc_param in named_parameters.items():
         if mlc_name in mapping.param_map:
             continue
-        convert = offset if mlc_name.endswith(norms) or mlc_name == f"{mlc}.norm.weight" else cast
+        convert = offset if mlc_name.endswith(norms) or mlc_name in whole else cast
         mapping.add_mapping(
             mlc_name, [mlc_to_hf(mlc_name)], functools.partial(convert, dtype=mlc_param.dtype)
         )
