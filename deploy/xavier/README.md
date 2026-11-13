@@ -190,8 +190,9 @@ request that does not fit is refused with HTTP 400 and the sentence clients
 look for (`This model's maximum context length is 8192 tokens. However, you
 requested …`): Pi then compacts the conversation and asks again once, where an
 unknown sentence ends its turn without a word. A single tool result larger
-than the context still ends the turn, with Pi's own error. Nemotron and the
-12B route refuse with the same sentence.
+than the context still ends the turn, with Pi's own error, unless
+[`pi-tool-result-cap.ts`](#pi-on-benchmark-client) is installed. Nemotron and
+the 12B route refuse with the same sentence.
 
 - **Tools** use the checkpoint's own format (`<tool_call>`, `<function=…>`,
   `<parameter=…>` blocks). The adapter returns them as OpenAI tool calls and
@@ -292,6 +293,25 @@ checks still enforce the actual prompt/output/verification budget.
 a one-line read result and then withheld the model's attempt to retrieve it.
 Pi's own configured compaction remains active. Re-enable the extension through
 `pi config` when using a suitable context size or after tuning its policy.
+
+[`pi-tool-result-cap.ts`](pi-tool-result-cap.ts) keeps one tool result within
+45 % of the active model's context window. Pi keeps up to 50 KB or 2,000 lines
+of a tool's output, more than an 8,192-token model can read beside its prompt,
+and compaction cannot shorten the newest message. Of a longer result the
+beginning and the end stay, around a line that says what was left out; tokens
+are estimated without a tokenizer, rather high than low (1.0 to 1.5 times the
+Qwen3.8 count on logs, notes, code and JSON). A result that fits is not
+touched, so a model with a large context never notices the extension.
+
+```bash
+ln -s "$PWD/deploy/xavier/pi-tool-result-cap.ts" ~/.pi/agent/extensions/xavier-tool-result-cap.ts
+node --test tests/node/test_pi_tool_result_cap.mjs
+```
+
+A launcher with `--no-extensions` loads it with `-e`. On the 8K route,
+`seq 1 9000` through the `bash` tool (about 10,000 tokens after Pi's own cut)
+reaches the model as 3,672 tokens and is answered; without the extension the
+turn ends in Pi's overflow error.
 
 ### Native Gemma4 tool calling
 
