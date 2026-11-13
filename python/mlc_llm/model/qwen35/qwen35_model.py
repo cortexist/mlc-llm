@@ -728,16 +728,15 @@ class Qwen35LMHeadModel(nn.Module):
         """Shared forward for batch methods using RNNState."""
         op_ext.configure()
         hidden_states, state = self.model.forward(input_embed, paged_kv_cache, state)
+        head = self.model.embed_tokens.lm_head_forward if self.tie_word_embeddings else self.lm_head
         if logit_positions is not None:
             hidden_states = op.take(hidden_states, logit_positions, axis=1)
-        if self.tie_word_embeddings:
-            logits = self.model.embed_tokens.lm_head_forward(hidden_states)
-        elif logit_positions is not None:
-            # One row per sequence is left: the small-batch kernel also serves prefill.
+            # One row per sequence is left: the small-batch kernel also serves prefill, and
+            # a tied head does not expand the embedding table for it.
             with xavier.small_batch():
-                logits = self.lm_head(hidden_states)
+                logits = head(hidden_states)
         else:
-            logits = self.lm_head(hidden_states)
+            logits = head(hidden_states)
         if logits.dtype != "float32":
             logits = logits.astype("float32")
         return logits, paged_kv_cache, state

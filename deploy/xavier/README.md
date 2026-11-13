@@ -26,6 +26,10 @@ The existing `nemotron:e4b` client ID is also accepted as a Nemotron alias.
 |---|---|---:|---|---|
 | `nemotron` | DFlash | 16,384 | Yes | Incremental chat; buffered tool turns |
 | `gemma4-12b` | Official QAT MTP, two proposals | 4,096 | Yes | Buffered SSE with keepalives |
+| `qwen3.8-27b` | Qwen3.8 2B draft, three proposals | 4,096 | Yes | Incremental chat; buffered tool turns |
+
+`qwen3.8-27b` is served instead of `gemma4-12b` with the optional
+[`xavier-qwen35.conf`](#qwen35-in-place-of-the-12b).
 
 The 12B route uses the Heretic target and the original Unified QAT assistant.
 It supports text `/v1/chat/completions`, greedy single-output generation,
@@ -139,6 +143,64 @@ For Nemotron-only operation, set `Environment=MLC_GEMMA4_MTP=0` in that drop-in,
 reload systemd and restart the service. Keep the shared-queue helper beside the
 serving script in either mode. No nginx, certificate, DNS or API-key change is
 needed when enabling/disabling the second model.
+
+### Qwen3.5 in place of the 12B
+
+`xavier-qwen35.conf` makes a Qwen3.5-family model the second chat model: a large
+target decoded with a small draft of the same family, served by
+`scripts/qwen35_service.py` under the API name `qwen3.8-27b`
+(`MLC_QWEN35_MODEL_ID`). It was built and measured with Qwen3.8 27B and
+Qwen3.8 2B, both `q4f16_1`. The drop-in also unloads the 12B and d1: the pair
+holds 17.1 GiB of GPU memory, and beside Nemotron and EmbeddingGemma 2 a 32 GB
+Xavier is then left with about 1.4 GiB available.
+
+With the two converted packages, the `chat_template.jinja` of the target's
+original checkpoint (MLC conversion omits it) and the service stopped:
+
+```bash
+TARGET=~/Models/<27B package> DRAFT=~/Models/<2B package> \
+  TEMPLATE=~/Models/<chat_template.jinja> bash scripts/build_xavier_qwen35.sh
+sudo install -m 644 deploy/xavier/xavier-qwen35.conf \
+  /etc/systemd/system/mlc-nemotron.service.d/xavier-qwen35.conf
+sudo systemctl daemon-reload
+sudo systemctl restart mlc-nemotron
+```
+
+The script links the packages as `dist/qwen35-target` and `dist/qwen35-draft`
+and compiles `dist/libs/qwen35-target-sm72.so` and `dist/libs/qwen35-draft-sm72.so`
+with the Xavier kernels and a 4,096-token context (`CONTEXT`; a token costs the
+27B 64 KiB of attention cache). The pair loads before Nemotron and takes the
+workspace of a full prefill chunk at once. Removing the drop-in and restarting
+restores the previous workers; no other file of the service changes.
+
+The route supports text `/v1/chat/completions`, greedy single-output generation
+without thinking (`enable_thinking=False` in the checkpoint's template), and
+refuses what the 12B route refuses. `max_tokens` defaults to the smaller of 512
+and the remaining context; three context places are kept for verification.
+
+- **Tools** use the checkpoint's own format (`<tool_call>`, `<function=…>`,
+  `<parameter=…>` blocks). The adapter returns them as OpenAI tool calls and
+  decodes an argument as JSON unless its declared type is `string`. Plain chat
+  streams as it is decoded. A request that declares tools is answered in one
+  piece, so a partial call never reaches a client.
+- **Speculative decoding.** Each round the draft proposes three tokens; the
+  target scores the last token and the proposals in one four-row step
+  (`verify_hold`), keeps the proposals up to its first disagreement and adds its
+  own next token (`commit_rows`). The output is the target's greedy output: the
+  same tokens as the target alone on four 128-token answers, at 11.0–13.5 tok/s
+  against 6.1. On longer answers a near-tie of the two best logits can resolve
+  differently. `MLC_QWEN35_DRAFTS=0` serves the target alone.
+- **Conversation reuse.** One conversation stays in the models between
+  requests, also across requests to the other models. The recurrent state of
+  the gated delta layers cannot go back, so a new prompt continues from one of
+  two points: where the last answer ended, or where the last prompt ended (a
+  copy of the recurrent state; the attention cache drops what follows).
+  `usage.prompt_tokens_details.cached_tokens` reports the tokens not read
+  again. The second turn of a 1,782-token conversation starts after 1.5 s
+  instead of 20.9 s.
+
+A Pi client registers `xavier/qwen3.8-27b` with the limits of the 12B entry
+below (4,096 context, 512 output tokens, explicit `samplingParams.max_tokens`).
 
 Generation defaults to `temperature: 0`. Explicit nonzero temperatures or
 `n` values other than 1 return HTTP 400: the experimental Xavier DFlash

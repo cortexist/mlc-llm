@@ -86,13 +86,18 @@ if variant != "baseline":
     receipt = install(variant, root / "dist/target-16k/mlc-chat-config.json")
 else:
     receipt = None
-mtp = None
+# Resident chat models beside Nemotron, by their API name. They load first, the
+# largest one before the others: Xavier NvMap can reject a large late startup
+# allocation.
+chats = {}
+if os.environ.get("MLC_QWEN35") == "1":
+    from qwen35_service import Qwen35Chat
+
+    chats[Qwen35Chat.model_id] = Qwen35Chat(root)
 if os.environ.get("MLC_GEMMA4_MTP") == "1":
     from gemma4_mtp_service import MTPChat
 
-    # Reserve/warm the larger target's workspace before the second engine's
-    # allocations. Xavier NvMap can reject a large late startup allocation.
-    mtp = MTPChat(root)
+    chats[MTPChat.model_id] = MTPChat(root)
 embedding = None
 decision = None
 speculative = os.environ.get("MLC_NEMOTRON_SPECULATIVE", "dflash")
@@ -198,9 +203,9 @@ with ServerContext() as context:
         "/v1/chat/completions", dependencies=[fastapi.Depends(openai_entrypoints.verify_api_key)]
     )
     async def chat(request: ChatCompletionRequest, raw_request: fastapi.Request):
-        if mtp is not None and request.model == mtp.model_id:
-            queue.active_model = mtp.model_id
-            return await mtp.handle(request)
+        if request.model in chats:
+            queue.active_model = request.model
+            return await chats[request.model].handle(request)
         if request.model not in (None, "nemotron", "nemotron:e4b"):
             raise fastapi.HTTPException(404, "Unknown model; see /v1/models")
         queue.active_model = "nemotron"
@@ -226,8 +231,8 @@ with ServerContext() as context:
     async def complete(request: CompletionRequest, raw_request: fastapi.Request):
         if request.response_format is not None and request.response_format.type == "json_object":
             raise fastapi.HTTPException(400, "Use buffered /v1/chat/completions for JSON objects")
-        if mtp is not None and request.model == mtp.model_id:
-            raise fastapi.HTTPException(400, "gemma4-12b supports /v1/chat/completions only")
+        if request.model in chats:
+            raise fastapi.HTTPException(400, f"{request.model} supports /v1/chat/completions only")
         if request.model not in (None, "nemotron", "nemotron:e4b"):
             raise fastapi.HTTPException(404, "Unknown model; see /v1/models")
         queue.active_model = "nemotron"
@@ -263,13 +268,13 @@ with ServerContext() as context:
                     task="decision",
                 )
             )
-        if mtp is not None:
+        for chat_model in chats.values():
             entries.append(
                 dict(
-                    id=mtp.model_id,
+                    id=chat_model.model_id,
                     object="model",
                     owned_by="xavier",
-                    context_length=mtp.context_length,
+                    context_length=chat_model.context_length,
                 )
             )
         if embedding is not None:
@@ -294,7 +299,7 @@ with ServerContext() as context:
             "status": "ok",
             "model": "nemotron",
             "models": ["nemotron"]
-            + ([mtp.model_id] if mtp is not None else [])
+            + list(chats)
             + ([embedding.model_id] if embedding is not None else [])
             + ([decision.model_id] if decision is not None else []),
             "queue": queue.status(),
@@ -308,8 +313,8 @@ with ServerContext() as context:
     try:
         uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info", access_log=False)
     finally:
-        if mtp is not None:
-            mtp.pool.shutdown(wait=True)
+        for chat_model in chats.values():
+            chat_model.pool.shutdown(wait=True)
         if embedding is not None:
             embedding.pool.shutdown(wait=True)
         if decision is not None:
