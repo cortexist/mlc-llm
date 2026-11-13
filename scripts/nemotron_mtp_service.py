@@ -11,6 +11,7 @@ MLC_NEMOTRON_MTP_DRAFTS        proposals of a round (2); 3 needs a target built 
 """
 
 import asyncio
+import contextvars
 import json
 import os
 import threading
@@ -32,6 +33,10 @@ from mlc_llm.protocol.openai_api_protocol import (
 )
 from mlc_llm.serve.engine_utils import process_prompts
 from mlc_llm.tokenizers import StopStrHandler, TextStreamer, Tokenizer
+
+# Set by the server for a one-off request (X-Xavier-Scratch: 1), which the cache keeps
+# apart from the two conversations.
+scratch_request = contextvars.ContextVar("scratch_request", default=False)
 
 
 class NemotronMTP:
@@ -175,6 +180,7 @@ class NemotronMTP:
 
     async def _events(self, request, chat):
         prompt, count, stops = await self.work(self._prepare, request, chat)
+        scratch = scratch_request.get()
         loop = asyncio.get_running_loop()
         events = asyncio.Queue()
         cancelled = threading.Event()
@@ -196,7 +202,7 @@ class NemotronMTP:
                     return not stopper.stop_triggered
 
                 result = self.trial.generate(
-                    prompt, count, token, cancelled, drafts=self.draft_tokens
+                    prompt, count, token, cancelled, drafts=self.draft_tokens, scratch=scratch
                 )
                 tail = streamer.put(stopper.finish()) + streamer.finish()
                 if tail:

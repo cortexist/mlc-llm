@@ -4,15 +4,15 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EvidenceRouter, evidenceAction, coverageAction } from '../../deploy/xavier/pi-evidence-router.mjs';
-const answer = (choice, probabilities) => ({choice,probabilities});
-const ordinary = answer('general',{workspace:.02,inventory:.03,general:.94,action:.01});
+const reply = (content, usage) => new Response(JSON.stringify({choices:[{message:{role:'assistant',content}}],usage}));
 
-test('semantic probabilities route ambiguous local facts, general advice and actions', () => {
- assert.equal(evidenceAction(ordinary),'agent');
- assert.equal(evidenceAction(answer('general',{workspace:.2,inventory:.02,general:.77,action:.01})),'workspace');
- assert.equal(evidenceAction(answer('action',{workspace:.3,inventory:.02,general:.08,action:.6})),'agent');
- assert.equal(evidenceAction(answer('inventory',{workspace:.1,inventory:.8,general:.09,action:.01})),'inventory');
- assert.throws(()=>evidenceAction(answer('general',{workspace:NaN})),/Invalid/);
+test('option names route local facts and inventory; general advice and actions stay with the agent', () => {
+ assert.equal(evidenceAction('general'),'agent');
+ assert.equal(evidenceAction('action'),'agent');
+ assert.equal(evidenceAction('workspace'),'workspace');
+ assert.equal(evidenceAction('inventory'),'inventory');
+ assert.throws(()=>evidenceAction('search'),/Invalid/);
+ assert.throws(()=>evidenceAction('constructor'),/Invalid/);
 });
 
 test('bounded cache avoids duplicate inference and separates environments', async () => {
@@ -22,11 +22,16 @@ test('bounded cache avoids duplicate inference and separates environments', asyn
   await writeFile(join(dir,'config'),JSON.stringify({baseUrl:'https://server.example/v1',keyFile:join(dir,'key')}));
   let calls=0;
   const router=new EvidenceRouter({configPath:join(dir,'config'),maxEntries:1,fetchImpl:async (url,opts)=>{
-   calls++;assert.equal(url,'https://server.example/v1/decisions');assert.equal(opts.redirect,'error');
+   calls++;assert.equal(url,'https://server.example/v1/chat/completions');assert.equal(opts.redirect,'error');
    assert.equal(opts.headers.Authorization,'Bearer test-key');
-   return new Response(JSON.stringify({answers:{route:ordinary},usage:{input_tokens:180}}),{headers:{'X-Xavier-Decision-Bucket-Tokens':'256'}});
+   assert.equal(opts.headers['X-Xavier-Scratch'],'1');
+   const body=JSON.parse(opts.body);
+   assert.deepEqual([body.model,body.temperature,body.max_tokens,body.messages.length],['nemotron',0,8,1]);
+   assert.match(body.messages[0].content,/^Classify the user intent\..*\n\nOptions:\n- workspace: .*\n- action: .*\n\nEnvironment: [AB]\nRequest: What is an embedding\?\n\nReply with one word: the option name\.$/s);
+   return reply('**General.**\n',{prompt_tokens:528});
   }});
-  assert.equal((await router.route('What is an embedding?','A')).cached,false);
+  const first=await router.route('What is an embedding?','A');
+  assert.deepEqual([first.action,first.choice,first.cached,first.input_tokens],['agent','general',false,528]);
   assert.equal((await router.route('What is an embedding?','A')).cached,true);
   assert.equal(calls,1);
   await router.route('What is an embedding?','B');
@@ -41,6 +46,17 @@ test('unavailable or malformed classifier leaves tools with the agent',async()=>
  const router=new EvidenceRouter({configPath:'/path/that/does/not/exist'});
  assert.equal((await router.route('Find our benchmark','A')).action,null);
  assert.equal((await router.route('x'.repeat(1601),'A')).reason,'outside_router_scope');
+ const dir=await mkdtemp(join(tmpdir(),'router-reply-'));
+ try {
+  await writeFile(join(dir,'key'),'test-key');
+  await writeFile(join(dir,'config'),JSON.stringify({baseUrl:'https://server.example/v1',keyFile:join(dir,'key')}));
+  let calls=0;
+  const talkative=new EvidenceRouter({configPath:join(dir,'config'),fetchImpl:async()=>{calls++;return reply('I would search the workspace.');}});
+  const bad=await talkative.route('Find our benchmark','A');
+  assert.deepEqual([bad.action,bad.reason],[null,'router_unavailable']);
+  await talkative.route('Find our benchmark','A');
+  assert.equal(calls,2); // A reply that names no option is not cached.
+ } finally {await rm(dir,{recursive:true,force:true});}
 });
 
 test('coverage decisions are cached against actual inventory and fail to one search',async()=>{
@@ -52,12 +68,10 @@ test('coverage decisions are cached against actual inventory and fail to one sea
   let calls=0, malformed=false, expectedTokens=4096;
   const router=new EvidenceRouter({configPath,fetchImpl:async (_url,opts)=>{
    calls++;
-   const body=JSON.parse(opts.body);
-   assert.equal(body.questions.coverage.type,'choice');
-   assert.deepEqual(body.state.current_deployment[0],{id:'example',task:'chat',context_length:expectedTokens});
-   const coverage=malformed ? {choice:'inventory',probabilities:{inventory:NaN}} :
-     {choice:'search',probabilities:{inventory:.03,search:.97}};
-   return new Response(JSON.stringify({answers:{coverage}}));
+   const content=JSON.parse(opts.body).messages[0].content;
+   assert.ok(content.includes(`\nEnvironment: local\nCurrent deployment: [{"id":"example","task":"chat","context_length":${expectedTokens}}]\nRequest: `));
+   assert.ok(!content.includes('private_field'));
+   return reply(malformed ? 'maybe' : 'search');
   }});
   const models=[{id:'example',context_length:4096,private_field:'not sent'}];
   assert.equal((await router.inventoryCoverage('Recorded RAM?','local',models)).action,'workspace');
@@ -71,6 +85,7 @@ test('coverage decisions are cached against actual inventory and fail to one sea
   const bad=await router.inventoryCoverage('Other question','local',models);
   assert.equal(bad.action,'workspace');assert.equal(bad.reason,'router_unavailable');
   assert.equal(calls,3); // No internal retry or recursive classification.
-  assert.equal(coverageAction({choice:'inventory',probabilities:{inventory:.8,search:.2}}),'inventory');
+  assert.equal(coverageAction('inventory'),'inventory');
+  assert.throws(()=>coverageAction('workspace'),/Invalid/);
  } finally {await rm(dir,{recursive:true,force:true});}
 });

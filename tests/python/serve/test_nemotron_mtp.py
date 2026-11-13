@@ -82,6 +82,52 @@ class Boundaries(unittest.TestCase):
             self.assertEqual(list(trial.entries), expected)
             self.assertEqual(trial.pinned["sid"], 1)
 
+    def test_scratch_request_starts_from_the_last_one_and_displaces_no_conversation(self):
+        removed = []
+        trial = CachedTrial.__new__(CachedTrial)
+        trial.pinned = {"sid": 1, "tokens": [2], "states": []}
+        trial.entries = OrderedDict([(10, {"sid": 10, "tokens": [2, 100, 4, 5], "states": []})])
+        trial.budget, trial.next_sid, trial.cache, trial.hidden = 32768, 12, None, None
+        trial.builtin = lambda name: lambda *args: (
+            removed.append(args[1]) if name == "remove_sequence" else None
+        )
+        trial.append = lambda *args: None
+        trial.forward = lambda *args: (None, None)
+        trial.keep = lambda *args: None
+        trial.argmax = lambda *args: [7]
+        trial.states = []
+
+        def run(prompt, scratch=False):
+            reuse = trial.prepare(prompt, 4)[1]
+            trial.snapshot(prompt, scratch=scratch)
+            return reuse
+
+        # Two scratch requests in a row: the second starts from the first and takes
+        # its place; the conversation stays.
+        self.assertEqual(run([2, 300, 301, 8], scratch=True), 1)
+        self.assertEqual(run([2, 300, 301, 9], scratch=True), 3)
+        self.assertEqual((list(trial.entries), trial.scratch["sid"], removed), ([10], 13, [12]))
+        # The conversation goes on from its own entry, and a second one is kept beside it.
+        self.assertEqual(run([2, 100, 4, 5, 6, 7]), 4)
+        self.assertEqual(run([2, 100, 9, 9]), 2)
+        self.assertEqual(
+            (list(trial.entries), trial.scratch["sid"], removed), ([14, 15], 13, [12, 10])
+        )
+        # With both conversations kept, a scratch request still starts from the last one.
+        self.assertEqual(run([2, 300, 301, 7], scratch=True), 3)
+        self.assertEqual(
+            (list(trial.entries), trial.scratch["sid"], removed[-1]), ([14, 15], 16, 13)
+        )
+        # A third conversation puts out the oldest conversation, not the scratch request.
+        self.assertEqual(run([2, 200, 1, 1]), 1)
+        self.assertEqual(
+            (list(trial.entries), trial.scratch["sid"], removed[-1]), ([15, 17], 16, 14)
+        )
+        # Short of K/V slots, the scratch request goes first.
+        trial.budget = 64
+        self.assertEqual(run([2, 200, 1, 1, 3]), 4)
+        self.assertEqual((list(trial.entries), trial.scratch), ([15, 18], None))
+
     def test_kv_only_prefill_runs_the_whole_model_only_where_a_token_is_predicted(self):
         prompt = [2] * 1200
         for mode, kv_only, whole in [

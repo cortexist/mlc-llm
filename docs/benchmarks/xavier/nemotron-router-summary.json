@@ -1,0 +1,62 @@
+{
+  "date": "2026-11-12",
+  "device": "Jetson AGX Xavier 32 GB, JetPack 5.1.8, CUDA 11.4, sm_72",
+  "model": "Nemotron with Gemma E4B MTP drafts (three proposals), resident service, chat route",
+  "protocol": {
+    "validation_questions": 32,
+    "development_questions": 30,
+    "validation_kind": "The same-author sets of d1-router-summary.json; prompt wording fixed before this model saw a case",
+    "router_classes": ["workspace", "inventory", "general", "action"],
+    "reply": "one option name, max_tokens 8, temperature 0",
+    "option_scores": false,
+    "request_header": "X-Xavier-Scratch: 1",
+    "client": "deploy/xavier/pi-evidence-router.mjs over HTTPS, client cache off"
+  },
+  "accuracy": {
+    "validation_correct": 31,
+    "development_correct": 27,
+    "replies_not_an_option": 0,
+    "validation_miss": "Request to add a project to the search index routed to workspace search",
+    "d1_validation_miss_routed_correctly": true
+  },
+  "latency_ms": {
+    "validation_median": 269,
+    "validation_max": 391,
+    "development_median": 271,
+    "development_max": 476
+  },
+  "inventory_coverage": {
+    "development_questions": 4,
+    "same_as_d1": 4,
+    "inventory_models": 3,
+    "min_ms": 269,
+    "max_ms": 423
+  },
+  "conversation_cache": {
+    "without_header": {
+      "turn_after_one_routing_request": {"prompt_tokens": 1057, "cached_tokens": 1040},
+      "turn_after_two_routing_requests": {"prompt_tokens": 1072, "cached_tokens": 352}
+    },
+    "scratch_header_two_conversations_cached": {
+      "turn_after_two_routing_requests": {"prompt_tokens": 1067, "cached_tokens": 1053, "seconds": [0.321, 0.27]},
+      "other_conversation_next_turn": {"prompt_tokens": 794, "cached_tokens": 776, "seconds": [0.391, 0.387]},
+      "routing_after_routing": {"prompt_tokens": [527, 534], "cached_tokens": 506, "seconds": [0.274, 0.331]},
+      "first_routing_after_start": {"prompt_tokens": 528, "cached_tokens": 352, "seconds": 0.455}
+    }
+  },
+  "pi_single_questions": [
+    {"kind": "general knowledge", "route": "agent", "total_s": 1.03, "correct": true},
+    {"kind": "Git command", "route": "agent", "total_s": 1.45, "correct": true},
+    {"kind": "deployed context limits", "route": "inventory, coverage inventory", "total_s": 2.1, "correct": true},
+    {"kind": "recorded measurement", "route": "workspace", "total_s": 6.58, "correct": false,
+     "note": "Retrieved passages did not hold the answer; the model said so"}
+  ],
+  "cpu_tests": {"node_router": 4, "nemotron_cache": 1},
+  "limitations": [
+    "Small authored validation set, not independent production accuracy",
+    "No option scores: the conservative 0.15 retrieval rule of the d1 router does not apply",
+    "Coverage checked on its four development questions only",
+    "Routing shares the GPU FIFO; a queued request waits and the client gives up after 5 s",
+    "Retrieved excerpt selection and synthesis remain separate quality limitations"
+  ]
+}

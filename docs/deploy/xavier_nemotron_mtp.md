@@ -88,6 +88,12 @@ KV-fork implementation. The 32768-token cache budget includes the active
 request, pinned prefix and recycled conversations; old entries are evicted
 before allocating a request that would exceed that budget.
 
+A chat request with the header `X-Xavier-Scratch: 1` is a scratch request, for
+one-offs such as a [routing decision](xavier_pi_evidence_router.md#scratch-requests).
+It is held in a place of its own, where the next scratch request starts from it
+and replaces it: it never puts a conversation out, and it is the first to go
+when the budget is short.
+
 ```bash
 sudo install -m 644 deploy/xavier/nemotron-mtp.conf \
   /etc/systemd/system/mlc-nemotron.service.d/nemotron-mtp.conf

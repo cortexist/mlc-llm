@@ -102,7 +102,7 @@ embedding = None
 decision = None
 speculative = os.environ.get("MLC_NEMOTRON_SPECULATIVE", "dflash")
 if speculative == "gemma_mtp":
-    from nemotron_mtp_service import NemotronMTP
+    from nemotron_mtp_service import NemotronMTP, scratch_request
 
     engine = NemotronMTP(root)
 elif speculative == "dflash":
@@ -209,6 +209,8 @@ with ServerContext() as context:
         if request.model not in (None, "nemotron", "nemotron:e4b"):
             raise fastapi.HTTPException(404, "Unknown model; see /v1/models")
         queue.active_model = "nemotron"
+        if speculative == "gemma_mtp":
+            scratch_request.set(raw_request.headers.get("x-xavier-scratch") == "1")
         if server_prompt is not None:
             try:
                 messages = prepend_policy(

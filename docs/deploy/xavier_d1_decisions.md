@@ -255,6 +255,7 @@ short synthetic mail cases retained their thresholded verdicts, with maximum
 probability drift below 0.000766. Floating-point results can differ between
 buckets; these checks do not establish general decision equivalence.
 
-The optional [Pi evidence-router example](xavier_pi_evidence_router.md) uses this
-fast path to classify where a question's evidence should come from, without
-starting a Nemotron generation or using one of its cached conversation entries.
+The optional [Pi evidence-router example](xavier_pi_evidence_router.md) used this
+fast path until 2026-11-12 to classify where a question's evidence should come
+from. It now asks Nemotron, which is resident in every profile; its d1
+measurements are kept there.

@@ -1,11 +1,10 @@
-/** Optional semantic evidence routing through a resident d1 decision worker. */
+/** Optional semantic evidence routing: resident Nemotron names one of a question's options. */
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 export const QUESTIONS = {
   route: {
-    type: 'choice',
     instructions: 'Classify the user intent. Recorded local facts use workspace. Only current deployment metadata uses inventory. General explanation/specifications use general. Requests to do or change something use action.',
     criteria: {
       workspace: 'Look up recorded local facts, measurements, notes, past settings or project history.',
@@ -18,7 +17,6 @@ export const QUESTIONS = {
 
 export const COVERAGE_QUESTIONS = {
   coverage: {
-    type: 'choice',
     instructions: 'Does current deployment data answer the request? context_length is the configured context window/input limit in tokens. Choose search for absent or historical facts.',
     criteria: {
       inventory: 'The request only asks for current model names, task types or configured token limits.',
@@ -27,28 +25,26 @@ export const COVERAGE_QUESTIONS = {
   },
 };
 
-function validateAnswer(answer, names) {
-  const p = answer?.probabilities;
-  if (!p || !names.includes(answer.choice) || Object.keys(p).length !== names.length ||
-      names.some(k => !Number.isFinite(p[k]) || p[k] < 0 || p[k] > 1) ||
-      Math.abs(names.reduce((sum,k) => sum+p[k],0)-1) > 0.001) {
-    throw new Error('Invalid routing probabilities');
-  }
-  return p;
+// The wording the measurements in docs/deploy/xavier_pi_evidence_router.md were taken with.
+function prompt(question, {environment, request, current_deployment}) {
+  const options = Object.entries(question.criteria).map(([name,text]) => `- ${name}: ${text}`).join('\n');
+  const deployment = current_deployment ? `Current deployment: ${JSON.stringify(current_deployment)}\n` : '';
+  return `${question.instructions}\n\nOptions:\n${options}\n\nEnvironment: ${environment}\n${deployment}`+
+    `Request: ${request}\n\nReply with one word: the option name.`;
 }
 
-export function coverageAction(answer) {
-  validateAnswer(answer, Object.keys(COVERAGE_QUESTIONS.coverage.criteria));
-  return answer.choice === 'inventory' ? 'inventory' : 'workspace';
+function validateChoice(choice, question) {
+  if (!Object.hasOwn(question.criteria, choice)) throw new Error('Invalid routing choice');
 }
 
-export function evidenceAction(answer) {
-  const p = validateAnswer(answer, Object.keys(QUESTIONS.route.criteria));
-  if (answer.choice === 'workspace' || answer.choice === 'inventory') return answer.choice;
-  // Read-only evidence is preferable to missing a plausible local fact. This is
-  // an engineering threshold, not a claim that the scores are calibrated accuracy.
-  if (answer.choice === 'general' && p.workspace >= 0.15) return 'workspace';
-  return 'agent';
+export function coverageAction(choice) {
+  validateChoice(choice, COVERAGE_QUESTIONS.coverage);
+  return choice === 'inventory' ? 'inventory' : 'workspace';
+}
+
+export function evidenceAction(choice) {
+  validateChoice(choice, QUESTIONS.route);
+  return choice === 'workspace' || choice === 'inventory' ? choice : 'agent';
 }
 
 export class EvidenceRouter {
@@ -98,19 +94,20 @@ export class EvidenceRouter {
       if (base.protocol !== 'https:' || base.username || base.password) throw new Error('Invalid routing endpoint');
       const key = (await readFile(cfg.keyFile,'utf8')).trim();
       if (!key) throw new Error('Missing routing credentials');
-      const response = await this.fetchImpl(base.href.replace(/\/$/,'')+'/decisions', {
-        method: 'POST', headers: { Authorization: 'Bearer '+key, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'd1-omni-2b', state, questions }),
+      // A scratch request stays out of the two conversations the server keeps for reuse.
+      const response = await this.fetchImpl(base.href.replace(/\/$/,'')+'/chat/completions', {
+        method: 'POST', headers: { Authorization: 'Bearer '+key, 'Content-Type': 'application/json',
+          'X-Xavier-Scratch': '1' },
+        body: JSON.stringify({ model: 'nemotron', temperature: 0, max_tokens: 8,
+          messages: [{ role: 'user', content: prompt(questions[name], state) }] }),
         redirect: 'error', signal: AbortSignal.timeout(5000),
       });
       if (!response.ok) throw new Error('Routing endpoint unavailable');
       const data = await response.json();
-      const answer = data.answers?.[name];
-      const action = actionFor(answer);
-      const result = { action, choice: answer.choice, probabilities: answer.probabilities,
-        cached: false, elapsed_ms: performance.now()-start,
-        input_tokens: data.usage?.input_tokens,
-        bucket_tokens: Number(response.headers.get('X-Xavier-Decision-Bucket-Tokens')) || null };
+      const choice = String(data.choices?.[0]?.message?.content ?? '').replace(/[*`.\s]/g,'').toLowerCase();
+      const action = actionFor(choice);
+      const result = { action, choice, cached: false, elapsed_ms: performance.now()-start,
+        input_tokens: data.usage?.prompt_tokens };
       this.cache.delete(cacheKey);
       this.cache.set(cacheKey,{at:Date.now(),result});
       while (this.cache.size > this.maxEntries) this.cache.delete(this.cache.keys().next().value);

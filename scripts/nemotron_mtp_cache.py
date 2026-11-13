@@ -1,4 +1,8 @@
-"""Single-worker MTP generation with a pinned prefix and two reusable conversations."""
+"""Single-worker MTP generation with a pinned prefix and two reusable conversations.
+
+A scratch request (a one-off, such as a routing decision) has a place of its own: the
+next one starts from it, and it never puts a conversation out.
+"""
 
 import time
 from collections import OrderedDict
@@ -20,6 +24,7 @@ class CachedTrial(Trial):
     # the layers that store K/V only (mtp_prefill_kv), and the last one a
     # one-row verification step.
     kv_only_prefill = False
+    scratch = None  # the last scratch request, held like an entry
 
     def __init__(
         self,
@@ -31,8 +36,9 @@ class CachedTrial(Trial):
         assistants=None,
         **shapes,
     ):
+        # Sequences: the pinned prefix, two conversations, a scratch request, the active one.
         super().__init__(
-            target, assistant, runtime_library, max_sequences=4, kv_budget=budget, **shapes
+            target, assistant, runtime_library, max_sequences=5, kv_budget=budget, **shapes
         )
         # Assistants compiled for shorter contexts; none when the assistant
         # attends the valid context only (MLC_E4B_MTP_ATTN=1).
@@ -89,7 +95,7 @@ class CachedTrial(Trial):
                     row = self.row_bytes(dest)
                     self.copy(dest, source, row * short_count, dest_offset=committed * row)
 
-    def snapshot(self, tokens, pinned=False):
+    def snapshot(self, tokens, pinned=False, scratch=False):
         n = len(tokens)
         states = []
         for source in self.states:
@@ -99,6 +105,9 @@ class CachedTrial(Trial):
         record = dict(sid=self.sid, tokens=list(tokens), states=states)
         if pinned:
             self.pinned = record
+        elif scratch:
+            self.drop_scratch()
+            self.scratch = record
         else:
             if self.replace_sid in self.entries:
                 self.evict(self.replace_sid)
@@ -111,20 +120,31 @@ class CachedTrial(Trial):
         self.builtin("remove_sequence")(self.cache, sid)
         del self.entries[sid]
 
+    def drop_scratch(self):
+        if self.scratch is not None:
+            self.builtin("remove_sequence")(self.cache, self.scratch["sid"])
+            self.scratch = None
+
+    def stored(self):
+        return [*self.entries.values(), *([self.scratch] if self.scratch else [])]
+
     def prepare(self, prompt, count):
         required = ((len(prompt) + count + 2 + 15) // 16) * 16
         pinned_size = ((len(self.pinned["tokens"]) + 15) // 16) * 16 if self.pinned else 0
         # Forks are independent linear copies in the Xavier runtime. Account for
         # the whole active request, not just its matched prefix, before forking.
         while (
-            self.entries
+            self.stored()
             and required
             + pinned_size
-            + sum(((len(e["tokens"]) + 15) // 16) * 16 for e in self.entries.values())
+            + sum(((len(e["tokens"]) + 15) // 16) * 16 for e in self.stored())
             > self.budget
         ):
-            self.evict(next(iter(self.entries)))
-        choices = ([self.pinned] if self.pinned else []) + list(self.entries.values())
+            if self.scratch:
+                self.drop_scratch()
+            else:
+                self.evict(next(iter(self.entries)))
+        choices = ([self.pinned] if self.pinned else []) + self.stored()
         chosen = max(
             choices, key=lambda e: common_prefix(e["tokens"], prompt, len(prompt) - 1), default=None
         )
@@ -135,7 +155,7 @@ class CachedTrial(Trial):
         self.replace_sid = (
             chosen["sid"]
             if chosen is not None
-            and chosen is not self.pinned
+            and chosen["sid"] in self.entries
             and reuse == min(len(chosen["tokens"]), len(prompt) - 1)
             else None
         )
@@ -178,7 +198,15 @@ class CachedTrial(Trial):
         self.device.sync()
 
     def generate(
-        self, prompt, count, on_token, cancelled, cache_result=True, ignore_eos=False, drafts=2
+        self,
+        prompt,
+        count,
+        on_token,
+        cancelled,
+        cache_result=True,
+        ignore_eos=False,
+        drafts=2,
+        scratch=False,
     ):
         if not prompt or count < 1 or len(prompt) + count + 2 > self.context_length:
             raise ValueError("Prompt/output exceed the context, including two verification slots")
@@ -239,7 +267,7 @@ class CachedTrial(Trial):
             if self.committed > retain:
                 self.builtin("popn")(self.cache, self.sid, self.committed - retain)
             if cache_result and not cancelled.is_set():
-                self.snapshot((prompt + output)[:retain])
+                self.snapshot((prompt + output)[:retain], scratch=scratch)
             self.device.sync()
             return dict(
                 tokens=output,
