@@ -170,12 +170,18 @@ class NemotronMTP:
         if not prompt or any(t < 0 or t >= 262144 for t in prompt):
             raise BadRequestError("A nonempty prompt with valid token IDs is required")
         remaining = self.context_length - len(prompt) - self.draft_tokens
-        count = min(512, remaining) if request.max_tokens is None else request.max_tokens
-        if count < 1 or count > remaining:
+        wanted = 1 if request.max_tokens is None else request.max_tokens
+        if wanted < 1:
+            raise BadRequestError("max_tokens must be at least 1")
+        if wanted > remaining:
+            # Clients that read this wording shorten the conversation and ask again.
             raise BadRequestError(
-                f"16K context: prompt uses {len(prompt)} tokens; max_tokens must be "
-                f"1..{max(0, remaining)} ({self.draft_tokens} verification slots)"
+                f"This model's maximum context length is {self.context_length} tokens. However, "
+                f"you requested {len(prompt) + wanted + self.draft_tokens} tokens ({len(prompt)} "
+                f"in the messages, {wanted} in the completion, {self.draft_tokens} verification "
+                "slots). Please reduce the length of the messages or completion."
             )
+        count = min(512, remaining) if request.max_tokens is None else wanted
         return prompt, count, stop
 
     async def _events(self, request, chat):

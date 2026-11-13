@@ -497,6 +497,11 @@ class Adapter(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(fastapi.HTTPException) as caught:
                     await self.chat.handle(ChatCompletionRequest(**base, **extra))
                 self.assertEqual(caught.exception.status_code, 400)
+        # The refusal of a request that is too long, in the words clients look for.
+        with self.assertRaises(fastapi.HTTPException) as caught:
+            await self.chat.handle(ChatCompletionRequest(**base, max_tokens=4091))
+        self.assertRegex(caught.exception.detail, r"maximum context length is \d+ tokens")
+        self.assertIn("reduce the length of the messages", caught.exception.detail)
         Streamer.text = [call("remove", path="/")]
         with self.assertRaises(fastapi.HTTPException) as caught:
             await self.chat.handle(ChatCompletionRequest(**base, tools=TOOLS))

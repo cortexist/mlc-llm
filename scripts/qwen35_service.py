@@ -200,12 +200,18 @@ class Qwen35Chat:
             tools = []
         prompt = self.render(messages, tools)
         remaining = self.context_length - len(prompt) - self.drafts
-        limit = min(512, remaining) if request.max_tokens is None else request.max_tokens
-        if limit < 1 or limit > remaining:
+        wanted = 1 if request.max_tokens is None else request.max_tokens
+        if wanted < 1:
+            raise ValueError("max_tokens must be at least 1")
+        if wanted > remaining:
+            # Clients that read this wording shorten the conversation and ask again.
             raise ValueError(
-                f"{name} context is {self.context_length} tokens; prompt uses {len(prompt)}, "
-                f"max_tokens must be 1..{max(0, remaining)} ({self.drafts} verification slots)"
+                f"This model's maximum context length is {self.context_length} tokens. However, "
+                f"you requested {len(prompt) + wanted + self.drafts} tokens ({len(prompt)} in the "
+                f"messages, {wanted} in the completion, {self.drafts} verification slots). "
+                "Please reduce the length of the messages or completion."
             )
+        limit = min(512, remaining) if request.max_tokens is None else wanted
         return prompt, limit, tools
 
     def block(self, prompt):

@@ -185,7 +185,13 @@ and link it as `dist/qwen35-target`.
 The route supports text `/v1/chat/completions`, greedy single-output generation
 without thinking (`enable_thinking=False` in the checkpoint's template), and
 refuses what the 12B route refuses. `max_tokens` defaults to the smaller of 512
-and the remaining context; three context places are kept for verification.
+and the remaining context; three context places are kept for verification. A
+request that does not fit is refused with HTTP 400 and the sentence clients
+look for (`This model's maximum context length is 8192 tokens. However, you
+requested …`): Pi then compacts the conversation and asks again once, where an
+unknown sentence ends its turn without a word. A single tool result larger
+than the context still ends the turn, with Pi's own error. Nemotron and the
+12B route refuse with the same sentence.
 
 - **Tools** use the checkpoint's own format (`<tool_call>`, `<function=…>`,
   `<parameter=…>` blocks). The adapter returns them as OpenAI tool calls and
