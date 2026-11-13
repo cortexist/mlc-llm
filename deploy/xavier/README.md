@@ -26,7 +26,7 @@ The existing `nemotron:e4b` client ID is also accepted as a Nemotron alias.
 |---|---|---:|---|---|
 | `nemotron` | DFlash | 16,384 | Yes | Incremental chat; buffered tool turns |
 | `gemma4-12b` | Official QAT MTP, two proposals | 4,096 | Yes | Buffered SSE with keepalives |
-| `qwen3.8-27b` | Qwen3.8 2B draft, three proposals | 4,096 | Yes | Incremental chat; buffered tool turns |
+| `qwen3.8-27b` | Qwen3.8 2B draft, three proposals | 4,096 | Yes | Incremental text; a tool call when it is complete |
 
 `qwen3.8-27b` is served instead of `gemma4-12b` with the optional
 [`xavier-qwen35.conf`](#qwen35-in-place-of-the-12b).
@@ -180,9 +180,10 @@ and the remaining context; three context places are kept for verification.
 
 - **Tools** use the checkpoint's own format (`<tool_call>`, `<function=…>`,
   `<parameter=…>` blocks). The adapter returns them as OpenAI tool calls and
-  decodes an argument as JSON unless its declared type is `string`. Plain chat
-  streams as it is decoded. A request that declares tools is answered in one
-  piece, so a partial call never reaches a client.
+  decodes an argument as JSON unless its declared type is `string`. Text
+  streams as it is decoded, with or without declared tools. A call is held from
+  its `<tool_call>` marker and sent when the answer is complete, so a partial
+  call never reaches a client.
 - **Speculative decoding.** Each round the draft proposes three tokens; the
   target scores the last token and the proposals in one four-row step
   (`verify_hold`), keeps the proposals up to its first disagreement and adds its

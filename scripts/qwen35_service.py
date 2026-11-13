@@ -9,8 +9,9 @@ Under dist/, as scripts/build_xavier_qwen35.sh leaves them:
 MLC_QWEN35_MODEL_ID  name of the model in the API (qwen3.8-27b)
 MLC_QWEN35_DRAFTS    proposals of a round, 1 to 3; 0 serves the target alone (3)
 
-Greedy, text only, without thinking. Plain chat streams as it is decoded. With tools the
-answer is complete before anything is sent, so a partial call never reaches a client.
+Greedy, text only, without thinking. Text streams as it is decoded. With tools, what
+may belong to a call is held until the answer is complete, so a partial call never
+reaches a client.
 """
 
 import asyncio
@@ -33,6 +34,19 @@ CALL = re.compile(r"<tool_call>\s*<function=([^>\n]+)>(.*?)</function>\s*</tool_
 PARAMETER = re.compile(r"\s*<parameter=([^>\n]+)>\n?(.*?)\n?</parameter>\s*(?=<parameter=|$)", re.S)
 MARKERS = ("<tool_call>", "</tool_call>", "<function=", "</function>")
 WARMUP = "What is 17 multiplied by 23? Give only the number."
+
+
+def before_call(text):
+    """The text that can be sent while more may follow: what precedes a tool call or a
+    tail that may begin one, without the surrounding space parse_output() removes."""
+    start = text.find(MARKERS[0])
+    if start < 0:
+        start = len(text)
+        for size in range(min(len(MARKERS[0]) - 1, len(text)), 0, -1):
+            if text.endswith(MARKERS[0][:size]):
+                start -= size
+                break
+    return text[:start].strip()
 
 
 def parse_output(text, tools):
@@ -192,22 +206,26 @@ class Qwen35Chat:
         return TextStreamer(self.tokenizer)
 
     def generate(self, prompt, limit, tools, emit, cancelled):
-        """The assistant message, why it ended and the usage; `emit` gets text as it comes."""
-        streamer, pieces = self.streamer(), []
+        """The assistant message, why it ended and the usage; `emit` gets the content as
+        it comes, and the calls are in the message only."""
+        streamer, text, sent = self.streamer(), "", 0
+
+        def send(content):
+            nonlocal sent
+            if emit is not None and len(content) > sent:
+                emit(content[sent:])
+                sent = len(content)
 
         def on_token(token):
-            pieces.append(streamer.put([token]))
-            if emit is not None and pieces[-1]:
-                emit(pieces[-1])
+            nonlocal text
+            text += streamer.put([token])
+            send(before_call(text) if tools else text)
             return True
 
         result = self.decoder.generate(prompt, limit, self.stops, on_token, cancelled.is_set)
-        pieces.append(streamer.finish())
-        if emit is not None and pieces[-1]:
-            emit(pieces[-1])
-        content, calls = "".join(pieces), []
-        if tools:
-            content, calls = parse_output(content, tools)
+        text += streamer.finish()
+        content, calls = parse_output(text, tools) if tools else (text, [])
+        send(content)
         completion = len(result["tokens"])
         usage = dict(
             prompt_tokens=len(prompt),
@@ -285,7 +303,7 @@ class Qwen35Chat:
             def emit(text):
                 loop.call_soon_threadsafe(texts.put_nowait, text)
 
-            task = asyncio.create_task(self.answer(prompt, limit, tools, None if tools else emit))
+            task = asyncio.create_task(self.answer(prompt, limit, tools, emit))
             task.add_done_callback(lambda _: texts.put_nowait(None))
             try:
                 yield event(dict(role="assistant", content=""))
@@ -299,15 +317,9 @@ class Qwen35Chat:
                         break
                     yield event(dict(content=text))
                 message, finish, usage = task.result()
-                if tools:
-                    delta = {}
-                    if message["content"]:
-                        delta["content"] = message["content"]
-                    if "tool_calls" in message:
-                        delta["tool_calls"] = [
-                            {"index": i, **call} for i, call in enumerate(message["tool_calls"])
-                        ]
-                    yield event(delta)
+                if "tool_calls" in message:
+                    calls = [{"index": i, **call} for i, call in enumerate(message["tool_calls"])]
+                    yield event(dict(tool_calls=calls))
                 yield event(finish=finish)
                 if request.stream_options and request.stream_options.include_usage:
                     yield event(usage=usage)

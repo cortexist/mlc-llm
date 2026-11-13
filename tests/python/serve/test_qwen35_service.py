@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from gemma4_tools import ToolFormatError
-from qwen35_service import Qwen35Chat, parse_output
+from qwen35_service import Qwen35Chat, before_call, parse_output
 from qwen35_spec import Decoder
 
 from mlc_llm.protocol.openai_api_protocol import ChatCompletionRequest
@@ -234,6 +234,18 @@ class ToolCalls(unittest.TestCase):
         )
         self.assertEqual(self.arguments("Just text."), ("Just text.", []))
 
+    def test_text_is_sent_up_to_what_may_begin_a_call(self):
+        for text, sent in [
+            ("Compare a < b", "Compare a < b"),
+            ("Compare a <", "Compare a"),
+            ("Reading.\n\n<tool_c", "Reading."),
+            ("Reading.\n\n<tool_call>\n<function=wr", "Reading."),
+            ("<tool_call>", ""),
+            (" \n", ""),
+        ]:
+            with self.subTest(text=text):
+                self.assertEqual(before_call(text), sent)
+
     def test_undeclared_incomplete_and_malformed_calls_are_errors(self):
         for text in [
             call("remove", path="/"),
@@ -292,7 +304,7 @@ class Adapter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunks[-1], "data: [DONE]\n\n")
         return [json.loads(chunk[6:]) for chunk in chunks if chunk.startswith("data: {")]
 
-    async def test_plain_chat_streams_and_tools_are_buffered(self):
+    async def test_text_streams_and_a_call_is_sent_when_it_is_complete(self):
         Streamer.text = ["Hel", "lo", "."]
         payload = {"model": "qwen", "messages": [{"role": "user", "content": "Hi"}]}
         result = await self.chat.handle(ChatCompletionRequest(**payload))
@@ -316,14 +328,46 @@ class Adapter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-2]["choices"][0]["finish_reason"], "stop")
         self.assertEqual(events[-1]["usage"]["total_tokens"], 7)
 
-        Streamer.text = ["Reading.\n\n", call("write", path="/tmp/a", content="x")]
+        # With tools the text streams too; what may begin a call waits.
         payload["tools"] = TOOLS
+        Streamer.text = ["Hel", "lo", ".\n"]
         events = await self.events(payload)
-        self.assertEqual(len(events), 4)
-        delta = events[1]["choices"][0]["delta"]
-        self.assertEqual(delta["content"], "Reading.")
-        self.assertEqual(delta["tool_calls"][0]["function"]["name"], "write")
-        self.assertEqual(events[2]["choices"][0]["finish_reason"], "tool_calls")
+        deltas = [e["choices"][0]["delta"] for e in events[:-2]]
+        self.assertEqual(
+            deltas,
+            [{"role": "assistant", "content": ""}]
+            + [{"content": text} for text in ("Hel", "lo", ".")],
+        )
+        self.assertEqual(events[-2]["choices"][0]["finish_reason"], "stop")
+
+        written = call("write", path="/tmp/a", content="x")
+        Streamer.text = [
+            "Read",
+            "ing a <",
+            " b.\n",
+            "\n" + written[:5],
+            written[5:40],
+            written[40:],
+        ]
+        events = await self.events(payload)
+        deltas = [e["choices"][0]["delta"] for e in events[1:-2]]
+        self.assertEqual(deltas[:-1], [{"content": text} for text in ("Read", "ing a", " < b.")])
+        self.assertEqual(list(deltas[-1]), ["tool_calls"])
+        self.assertEqual(deltas[-1]["tool_calls"][0]["function"]["name"], "write")
+        self.assertEqual(deltas[-1]["tool_calls"][0]["index"], 0)
+        self.assertEqual(events[-2]["choices"][0]["finish_reason"], "tool_calls")
+
+        # Text after a call is sent with the answer complete; a call that does not end
+        # is an error after the text before it.
+        Streamer.text = ["First.\n", written, "\nThen."]
+        events = await self.events(payload)
+        deltas = [e["choices"][0]["delta"] for e in events[1:-2]]
+        self.assertEqual(deltas[:-1], [{"content": "First."}, {"content": "\n\nThen."}])
+        Streamer.text = ["Reading.\n", written[:40]]
+        events = await self.events(payload)
+        self.assertEqual(events[1]["choices"][0]["delta"], {"content": "Reading."})
+        self.assertEqual(events[2]["error"]["type"], "tool_format_error")
+        self.assertEqual(len(events), 3)
 
         del payload["stream_options"]
         payload.update(stream=False, tool_choice="none")
