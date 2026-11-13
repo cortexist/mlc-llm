@@ -4,6 +4,7 @@
 #
 #   dist/qwen35-target, dist/qwen35-draft                       links to the converted weights
 #   dist/libs/qwen35-target-sm72.so, dist/libs/qwen35-draft-sm72.so
+#   dist/prefill-experiments/native.so                          tensor-core attention kernels
 #
 # TARGET and DRAFT are converted q4f16_1 packages of one Qwen3.5 family (same vocabulary).
 # TEMPLATE is chat_template.jinja of the target's original checkpoint, which MLC conversion
@@ -34,3 +35,6 @@ for name in target draft; do
     taskset -c 0,1 python -m mlc_llm compile "dist/qwen35-$name/mlc-chat-config.json" \
         --device cuda --opt "$opt" --overrides "$overrides" -o "dist/libs/qwen35-$name-sm72.so"
 done
+# The libraries hold TVM's attention kernels; the tensor-core ones are installed when
+# the caches are created (mlc_llm/op/xavier_prefill.py, install_qwen35).
+taskset -c 0,1 python scripts/build_xavier_prefill.py --native-only

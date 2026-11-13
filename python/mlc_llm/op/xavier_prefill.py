@@ -187,11 +187,51 @@ def install(variant, target_config=None):
                 # The query heads that share K and V, and the keys a local layer attends.
                 group = heads[0] if repeated and not local else heads[0] // heads[1]
                 wrapped = native["wrap_paged"](
-                    old[1], index % 2, *heads, group, window if local else 0
+                    old[1], index % 2, *heads, group, window if local else 0, 512
                 )
                 args[index] = tvm_ffi.convert([old[0], wrapped])
             receipt["target_caches"] += 1
             print("Prefill experiment installed:", receipt, flush=True)
+        return original(*args)
+
+    tvm_ffi.register_global_func(key, create, override=True)
+    return receipt
+
+
+# Query and stored K/V heads of the Qwen3.8 27B and 2B. Their heads are 256 wide,
+# without padding, and all their attention layers are global.
+QWEN35_HEADS = ((24, 4), (8, 2))
+
+
+def install_qwen35():
+    """Tensor cores for the attention caches of the Qwen3.8 27B and 2B, libraries unchanged.
+
+    Every call over the cached pages (a prefill chunk, a verification, a decode step) takes
+    the paged kernel, and the current chunk of a prefill the WMMA one. A call they are not
+    built for goes to the kernel of the library.
+    """
+    native = tvm_ffi.load_module(str(ROOT / "dist/prefill-experiments/native.so"))
+    key = "vm.builtin.paged_attention_kv_cache_create"
+    original = tvm_ffi.get_global_func(key)
+    receipt = {"variant": "qwen35", "caches": 0}
+
+    def create(*args):
+        args = list(args)
+        heads = tuple(map(int, args[2:4]))
+        # Without sliding windows, RoPE is applied before the kernels (rope mode 1).
+        plain = int(args[0][4]) == 0 and int(args[8]) == 1
+        if heads in QWEN35_HEADS and tuple(map(int, args[4:6])) == (256, 256) and plain:
+            assert len(args) == 28 and all(str(args[index][0]) == "tirx" for index in (15, 16, 17))
+            old = args[15]
+            chunk = native["wrap_prefill"](old[1], native["ragged256"], 0, 7)
+            args[15] = tvm_ffi.convert([old[0], chunk])
+            for index in (16, 17):  # prefill and decode over the cached pages
+                old = args[index]
+                wrapped = native["wrap_paged"](
+                    old[1], index % 2, *heads, heads[0] // heads[1], 0, 256
+                )
+                args[index] = tvm_ffi.convert([old[0], wrapped])
+            receipt["caches"] += 1
         return original(*args)
 
     tvm_ffi.register_global_func(key, create, override=True)

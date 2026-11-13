@@ -8,6 +8,8 @@ Under dist/, as scripts/build_xavier_qwen35.sh leaves them:
 
 MLC_QWEN35_MODEL_ID  name of the model in the API (qwen3.8-27b)
 MLC_QWEN35_DRAFTS    proposals of a round, 1 to 3; 0 serves the target alone (3)
+MLC_QWEN35_PREFILL   "paged": tensor-core attention for both models, which needs
+                     dist/prefill-experiments/native.so (baseline: the libraries' kernels)
 
 Greedy, text only, without thinking. Text streams as it is decoded. With tools, what
 may belong to a call is held until the answer is complete, so a partial call never
@@ -127,6 +129,14 @@ class Qwen35Chat:
         self.system = self.template.encode("<|im_start|>system\n", add_special_tokens=False)
         self.end = self.template.convert_tokens_to_ids("<|im_end|>")
         device = detect_device("cuda")
+        attention = os.environ.get("MLC_QWEN35_PREFILL", "baseline")
+        if attention not in ("baseline", "paged"):
+            raise ValueError("MLC_QWEN35_PREFILL is baseline or paged")
+        receipt = None
+        if attention == "paged":
+            from mlc_llm.op.xavier_prefill import install_qwen35
+
+            receipt = install_qwen35()
         target = Program(model, dist / "libs/qwen35-target-sm72.so", device, history=1)
         draft = None
         if self.drafts:
@@ -136,6 +146,8 @@ class Qwen35Chat:
                 device,
                 history=self.drafts + 1,
             )
+        if receipt is not None and receipt["caches"] != (2 if draft else 1):
+            raise RuntimeError("The tensor-core attention kernels did not take the Qwen3.5 caches")
         self.decoder = Decoder(target, draft, self.drafts or 1)
         self.context_length = self.decoder.context
         prompt = self.render([{"role": "user", "content": WARMUP}], [])
@@ -154,6 +166,7 @@ class Qwen35Chat:
                     "model": self.model_id,
                     "context_length": self.context_length,
                     "drafts": self.drafts,
+                    "attention": attention,
                     "accepted": result["accepted"],
                     "proposed": result["proposed"],
                 }

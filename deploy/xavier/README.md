@@ -171,7 +171,8 @@ sudo systemctl restart mlc-nemotron
 The script links the packages as `dist/qwen35-target` and `dist/qwen35-draft`
 and compiles `dist/libs/qwen35-target-sm72.so` and `dist/libs/qwen35-draft-sm72.so`
 with the Xavier kernels and an 8,192-token context (`CONTEXT`; a token costs the
-27B 64 KiB of attention cache and the 2B 12 KiB). The pair loads before Nemotron
+27B 64 KiB of attention cache and the 2B 12 KiB), and builds the attention
+module `dist/prefill-experiments/native.so`. The pair loads before Nemotron
 and takes the workspace of a full prefill chunk at once. Removing the drop-in and restarting
 restores the previous workers; no other file of the service changes.
 
@@ -224,8 +225,25 @@ the 12B route refuse with the same sentence.
   share the pages of one context: the block is dropped when such a conversation
   needs its pages, and replaced when a conversation begins with another block
   of that size. A client changes nothing; `cached_tokens` reports the block.
-  With a 2,540-token block, the first conversation starts after 32 s and
-  another one after 1.6 s. The third copy of the state costs about 220 MiB.
+  With a 2,540-token block, the first conversation starts after 27 s and
+  another one after 1.4 s. The third copy of the state costs about 220 MiB.
+- **Attention on tensor cores.** `MLC_QWEN35_PREFILL=paged`, which the drop-in
+  sets, installs the fork's tensor-core attention kernels when the two caches
+  are created; the libraries keep TVM's kernels, which take over without it.
+  Over the cached pages they serve every call (a prefill chunk, a verification,
+  a decode step), and the current chunk of a prefill has a kernel of its own.
+  One layer of the 27B attends 8,256 cached tokens from a 512-token chunk in
+  140 ms instead of 517 ms. Measured on the same tokens: 2,561 tokens read anew
+  in 27.3 s instead of 31.5 s, 3,672 tokens behind 2,587 cached ones in 44.9 s
+  instead of 68.0 s, 7,941 tokens anew in 93 s instead of 138 s; behind 6,708
+  tokens a verification takes 196 ms instead of 340 ms and a decode step of the
+  draft 20 ms instead of 34 ms. Prompts of a few hundred tokens gain nothing:
+  read anew, the 27B takes 161 tokens at 61 tokens/s with either set of
+  kernels, 512 (one chunk, the best size) at 106 instead of 102, 1,024 at 104
+  instead of 97, 2,048 at 101 instead of 88 and 4,096 at 96 instead of 75.
+  The kernels round differently from TVM's (the best token agreed in all 15
+  compared reads and steps, logits within 0.35), so a near-tie of two tokens can
+  resolve differently.
 
 A Pi client registers `xavier/qwen3.8-27b` like the 12B entry below, with an
 8,192-token context (`contextWindow`) and an explicit

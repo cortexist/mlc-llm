@@ -17,15 +17,23 @@ p = argparse.ArgumentParser()
 p.add_argument("--output", required=True)
 p.add_argument("--stress", action="store_true", help="Unit-scale Q/K/V and small-batch fallback")
 p.add_argument("--layer-width", action="store_true", help="Check layer-aware ragged widths")
-p.add_argument("--layout", choices=["e4b", "unified"], default="e4b")
+# Query heads, stored K/V heads and stored width of a head. Of the Unified 12B
+# (--layer-width) and of the Qwen3.8 models, whose heads are not padded, only the
+# current chunk takes these kernels; their cached pages take test_xavier_paged.py.
+LAYOUTS = {
+    "e4b": (8, 2, 512),
+    "unified": (16, 8, 512),
+    "qwen27b": (24, 4, 256),
+    "qwen2b": (8, 2, 256),
+}
+p.add_argument("--layout", choices=list(LAYOUTS), default="e4b")
 a = p.parse_args()
-# Query and stored K/V heads. Of the Unified 12B, only the current chunk
-# (--layer-width) takes these kernels; its cached pages take test_xavier_paged.py.
-HQ, KV = (8, 2) if a.layout == "e4b" else (16, 8)
+HQ, KV, STRIDE = LAYOUTS[a.layout]
 G = HQ // KV
-assert a.layer_width or a.layout == "e4b"
-fns = {"ragged": _attention_prefill_ragged(KV, HQ, 512, 512, "float16", {}, TARGET)}
-for local in (0, 1):
+unpadded = STRIDE == 256
+assert not (a.layer_width and unpadded) and (a.layer_width or unpadded or a.layout == "e4b")
+fns = {"ragged": _attention_prefill_ragged(KV, HQ, STRIDE, STRIDE, "float16", {}, TARGET)}
+for local in () if unpadded else (0, 1):
     fns[f"paged{local}"] = _attention_prefill(
         KV, HQ, 512, "float16", bool(local), {}, TARGET, sliding_window_size=512
     )
@@ -35,7 +43,7 @@ ref = tvm.compile(
 folder = ROOT / "dist/prefill-experiments"
 native = tvm_ffi.load_module(str(folder / "native.so"))
 modules = {"wmma": native}
-if not a.layer_width:
+if not a.layer_width and not unpadded:
     modules.update({v: tvm_ffi.load_module(str(folder / f"{v}.so")) for v in ("bounds", "width")})
 rng = np.random.default_rng(9331)
 dev = tvm_tirx.cuda(0)
@@ -77,8 +85,9 @@ if a.stress:
     ]
 input_std = 1.0 if a.stress else 0.2
 output_atol = 0.002 if a.stress else 0.00025
-if a.layer_width:
+if a.layer_width or unpadded:
     cases = [case for case in cases if case[0] == "ragged"]
+if a.layer_width:
     cases += [("ragged256", *case[1:]) for case in list(cases)]
 for name, rows_list, contexts, offset, sink, causal, scale in cases:
     narrow_ragged = name == "ragged256"
@@ -86,11 +95,11 @@ for name, rows_list, contexts, offset, sink, causal, scale in cases:
         name = "ragged"
     local = name == "paged1"
     paged = name != "ragged"
-    width = 256 if local or narrow_ragged else 512
+    width = 256 if local or narrow_ragged else STRIDE
     batch = len(rows_list)
     rows = sum(rows_list)
     qptr = np.array([0, *np.cumsum(rows_list)], "int32")
-    q = np.zeros((rows, HQ, 512), "float16")
+    q = np.zeros((rows, HQ, STRIDE), "float16")
     q[:, :, :width] = rng.normal(0, input_std, (rows, HQ, width)).astype("float16")
     kvs = [rng.normal(0, input_std, (2, c, KV, width)).astype("float16") for c in contexts]
     qo = tvm_tirx.runtime.empty(q.shape, "float16", dev)
@@ -134,7 +143,7 @@ for name, rows_list, contexts, offset, sink, causal, scale in cases:
             scale,
         ]
     else:
-        kv = np.zeros((2, sum(contexts), KV, 512), "float16")
+        kv = np.zeros((2, sum(contexts), KV, STRIDE), "float16")
         pos = 0
         for x in kvs:
             kv[:, pos : pos + x.shape[1], :, :width] = x
@@ -166,7 +175,7 @@ for name, rows_list, contexts, offset, sink, causal, scale in cases:
         for r in sorted(set([0, min(1, nr - 1), min(15, nr - 1), min(16, nr - 1), nr - 2, nr - 1])):
             first = max(0, c - max(512 - r - 1, 0)) if local and causal else 0
             last = min(c, c - nr + r + 1) if not local and causal else c
-            expected = np.zeros((HQ, 512), "float32")
+            expected = np.zeros((HQ, STRIDE), "float32")
             expected_lse = np.full(HQ, -50000.0, "float32")
             if last > first:
                 for h in range(HQ):
@@ -203,7 +212,9 @@ for name, rows_list, contexts, offset, sink, causal, scale in cases:
     for variant, module in candidates.items():
         fn = native["wrap_prefill"](
             ref[name],
-            module["ragged_by_layer"]("lg") if a.layer_width else module[name],
+            module["ragged_by_layer"]("lg")
+            if a.layer_width
+            else module["ragged256" if unpadded else name],
             int(variant == "width" and local),
             8 if paged else 7,
         )

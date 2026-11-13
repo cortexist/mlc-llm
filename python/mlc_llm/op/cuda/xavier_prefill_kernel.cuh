@@ -1,5 +1,6 @@
 // Volta WMMA prefill: 16 queries x 16 keys; four warps split QK's reduction.
-// Physical Q/K/V stride remains 512. Only local paged attention uses D=256.
+// S is the stored width of a Q/K/V head and D the part of it in use: of a padded
+// Gemma cache (S = 512), a local layer uses 256.
 #include <cuda_fp16.h>
 #include <math_constants.h>
 #include <mma.h>
@@ -16,7 +17,7 @@ struct Shared {
   float maximum[16], denominator[16], factor[16];
 };
 
-template <int D, bool Paged, bool Local>
+template <int D, bool Paged, bool Local, int S = 512>
 __global__ void attention(const half* q, const int* qptr, const half* keys, const half* values,
                           const int* kptr, const int* page_values, const int* length, half* output,
                           float* lse, int batch, int hq, int hkv, int page_size, int causal,
@@ -52,7 +53,7 @@ __global__ void attention(const half* q, const int* qptr, const half* keys, cons
   begin = begin / 16 * 16;
   for (int i = t; i < 16 * D; i += 128) {
     int r = i / D, d = i % D;
-    s.q[i] = r < rows ? q[((int64_t)(qbase + r) * hq + head) * 512 + d] : __float2half(0.f);
+    s.q[i] = r < rows ? q[((int64_t)(qbase + r) * hq + head) * S + d] : __float2half(0.f);
   }
   if (t < 16) {
     s.maximum[t] = -50000.f;
@@ -69,9 +70,9 @@ __global__ void attention(const half* q, const int* qptr, const half* keys, cons
         if constexpr (Paged) {
           int slot = pos < sink ? pos : pos - sink + offset;
           int page = page_values[first + slot / page_size];
-          value = keys[((((int64_t)page * 2) * hkv + kh) * page_size + slot % page_size) * 512 + d];
+          value = keys[((((int64_t)page * 2) * hkv + kh) * page_size + slot % page_size) * S + d];
         } else
-          value = keys[((int64_t)(first + pos) * hkv + kh) * 512 + d];
+          value = keys[((int64_t)(first + pos) * hkv + kh) * S + d];
       }
       s.kv[i] = value;
     }
@@ -126,9 +127,9 @@ __global__ void attention(const half* q, const int* qptr, const half* keys, cons
           int slot = pos < sink ? pos : pos - sink + offset;
           int page = page_values[first + slot / page_size];
           value =
-              keys[((((int64_t)page * 2 + 1) * hkv + kh) * page_size + slot % page_size) * 512 + d];
+              keys[((((int64_t)page * 2 + 1) * hkv + kh) * page_size + slot % page_size) * S + d];
         } else
-          value = values[((int64_t)(first + pos) * hkv + kh) * 512 + d];
+          value = values[((int64_t)(first + pos) * hkv + kh) * S + d];
       }
       s.kv[i] = value;
     }
@@ -160,13 +161,14 @@ __global__ void attention(const half* q, const int* qptr, const half* keys, cons
     for (int j = 0; j < 8; ++j) {
       int i = lane + j * 32, row = i / 16, col = (warp * Chunks + chunk) * 16 + i % 16;
       if (row < rows)
-        output[((int64_t)(qbase + row) * hq + head) * 512 + col] =
+        output[((int64_t)(qbase + row) * hq + head) * S + col] =
             __float2half_rn(acc[chunk][j] / s.denominator[row]);
     }
   }
-  if constexpr (D == 256) {
-    for (int i = t; i < rows * 256; i += 128)
-      output[((int64_t)(qbase + i / 256) * hq + head) * 512 + 256 + i % 256] = __float2half(0.f);
+  if constexpr (D < S) {
+    for (int i = t; i < rows * (S - D); i += 128)
+      output[((int64_t)(qbase + i / (S - D)) * hq + head) * S + D + i % (S - D)] =
+          __float2half(0.f);
   }
   if (t < rows) lse[(qbase + t) * hq + head] = s.maximum[t] + log2f(s.denominator[t]);
 }

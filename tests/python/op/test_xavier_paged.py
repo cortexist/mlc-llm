@@ -1,9 +1,10 @@
 """Check the tensor-core paged attention against FP32 attention and time it against TVM.
 
-One sequence in the padded cache layout of the E4B or of the Unified 12B, through
-both the prefill and the decode callback. Every slot that no query may attend
-holds NaN: unused keys of the last page, pages of other sequences and the
-padding of local heads.
+One sequence in the cache layout of the E4B, of the Unified 12B (both padded to
+512) or of a Qwen3.8 model (256 wide, global layers only), through both the
+prefill and the decode callback. Every slot that no query may attend holds NaN:
+unused keys of the last page, pages of other sequences and the padding of local
+heads.
 """
 
 import argparse
@@ -22,18 +23,25 @@ from mlc_llm.op.xavier_prefill import ROOT, TARGET
 p = argparse.ArgumentParser()
 p.add_argument("--output", required=True)
 p.add_argument("--stress", action="store_true", help="Unit-scale Q/K/V")
-p.add_argument("--layout", choices=["e4b", "unified"], default="e4b")
+# Query heads, stored K/V heads, local window (0: no local layers) and stored width
+# of a head. The Unified 12B stores the one K/V head of a global layer in every
+# cache head.
+LAYOUTS = {
+    "e4b": (8, 2, 512, 512),
+    "unified": (16, 8, 1024, 512),
+    "qwen27b": (24, 4, 0, 256),
+    "qwen2b": (8, 2, 0, 256),
+}
+p.add_argument("--layout", choices=list(LAYOUTS), default="e4b")
 a = p.parse_args()
-# Query heads, stored K/V heads, local window. The Unified 12B stores the one
-# K/V head of a global layer in every cache head.
-HQ, KV, W = (8, 2, 512) if a.layout == "e4b" else (16, 8, 1024)
+HQ, KV, W, STRIDE = LAYOUTS[a.layout]
 G = HQ // KV
 fns = {}
-for local in (0, 1):
+for local in (0, 1) if W else (0,):
     fns[f"prefill{local}"] = _attention_prefill(
-        KV, HQ, 512, "float16", bool(local), {}, TARGET, sliding_window_size=W
+        KV, HQ, STRIDE, "float16", bool(local), {}, TARGET, sliding_window_size=W
     )
-    fns[f"decode{local}"] = _attention_decode(KV, HQ, 512, "float16", bool(local), {}, TARGET)
+    fns[f"decode{local}"] = _attention_decode(KV, HQ, STRIDE, "float16", bool(local), {}, TARGET)
 ref = tvm.compile(
     tvm_tirx.IRModule({k: v.with_attr("global_symbol", k) for k, v in fns.items()}), target=TARGET
 ).jit()
@@ -68,6 +76,10 @@ cases = [(0, 0, r, c, 0, 0, 0, 1.0) for r, c in ((1, 1), (1, 17), (2, 16), (3, 1
 cases += [(0, 0, r, c, 0, 0, 0, 1.0) for r, c in ((5, 31), (8, 700), (9, 1536), (17, 32))]
 cases += [(0, 0, r, c, 0, 0, 0, 1.0) for r, c in ((161, 161), (232, 1536), (512, 512))]
 cases += [(0, 0, r, c, 0, 0, 0, 1.0) for r, c in ((512, 4000), (3, 8256), (512, 8256))]
+# Rows around what a block of six query heads holds (two, or five of a chunk) and
+# around where a chunk of such blocks stops splitting the keys.
+cases += [(0, 0, r, c, 0, 0, 0, 0.0625) for r, c in ((4, 6600), (6, 200), (10, 97), (11, 2000))]
+cases += [(0, 0, r, c, 0, 0, 0, 0.0625) for r, c in ((80, 300), (81, 300), (134, 6574))]
 cases += [(0, 0, r, c, 0, 0, 1, 1.0) for r, c in ((5, 100), (17, 32), (161, 161))]
 cases += [(1, 0, r, c, o, 0, 1, 1.0) for r, c, o in ((1, 1, 0), (3, 100, 0), (4, 512, 5))]
 cases += [(1, 0, r, c, o, 0, 1, 1.0) for r, c, o in ((8, 512, 9), (17, 32, 0), (161, 161, 0))]
@@ -79,10 +91,12 @@ if W == 1024:
     cases += [(1, 0, r, c, o, 0, 1, 1.0) for r, c, o in ((3, 1024, 13), (512, 1024, 3))]
     cases += [(1, 0, r, c, o, 0, 1, 1.0) for r, c, o in ((448, 700, 0), (17, 1024, 0))]
     cases += [(1, 1, 1, c, o, 0, 0, 1.0) for c, o in ((1024, 5), (1024, 0), (700, 0))]
+if not W:
+    cases = [case for case in cases if not case[0]]
 results = []
 for local, decode, rows, count, offset, sink, causal, scale in cases:
-    width = 256 if local else 512
-    q = np.zeros((rows, HQ, 512), "float16")
+    width = 256 if local else STRIDE
+    q = np.zeros((rows, HQ, STRIDE), "float16")
     q[:, :, :width] = rng.normal(0, input_std, (rows, HQ, width)).astype("float16")
     repeated = int(a.layout == "unified" and not local)
     kv = rng.normal(0, input_std, (2, count, 1 if repeated else KV, width)).astype("float16")
@@ -90,7 +104,7 @@ for local, decode, rows, count, offset, sink, causal, scale in cases:
     span = count + offset - sink
     npages = (span + 15) // 16
     pv = rng.permutation(npages + 3)[:npages].astype("int32")
-    pages = np.full((npages + 3, 2, KV, 16, 512), np.nan, "float16")
+    pages = np.full((npages + 3, 2, KV, 16, STRIDE), np.nan, "float16")
     # Expired keys in front of a local window are real, finite data.
     expired = rng.normal(0, input_std, (2, KV, offset, width)).astype("float16")
     for slot in range(offset):
@@ -115,7 +129,7 @@ for local, decode, rows, count, offset, sink, causal, scale in cases:
         seen = key >= np.maximum(0, count - np.maximum(W - row - 1, 0))
     elif causal:
         seen = key < count - rows + row + 1
-    expected = np.zeros((rows, HQ, 512), "float32")
+    expected = np.zeros((rows, HQ, STRIDE), "float32")
     expected_lse = np.full((rows, HQ), -50000.0, "float32")
     mask = np.repeat(seen, G, axis=0)
     some = mask.any(1)
@@ -132,7 +146,7 @@ for local, decode, rows, count, offset, sink, causal, scale in cases:
         expected_lse[:, head * G : head * G + G] = lse.reshape(rows, G)
 
     fn = native["wrap_paged"](
-        tvm_ffi.convert(refuse), decode, HQ, KV, HQ if repeated else G, W if local else 0
+        tvm_ffi.convert(refuse), decode, HQ, KV, HQ if repeated else G, W if local else 0, STRIDE
     )
     fn(*inputs)
     output, lse = qo.numpy(), lseo.numpy()
