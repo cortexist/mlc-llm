@@ -12,6 +12,10 @@ MLC_QWEN35_DRAFTS    proposals of a round, 1 to 3; 0 serves the target alone (3)
 Greedy, text only, without thinking. Text streams as it is decoded. With tools, what
 may belong to a call is held until the answer is complete, so a partial call never
 reaches a client.
+
+One conversation stays in the models, and so does the system block (the system message
+with the declared tools) of the last conversation that began with one of PINNED tokens
+or more: another conversation with the same block reads only what follows it.
 """
 
 import asyncio
@@ -34,6 +38,7 @@ CALL = re.compile(r"<tool_call>\s*<function=([^>\n]+)>(.*?)</function>\s*</tool_
 PARAMETER = re.compile(r"\s*<parameter=([^>\n]+)>\n?(.*?)\n?</parameter>\s*(?=<parameter=|$)", re.S)
 MARKERS = ("<tool_call>", "</tool_call>", "<function=", "</function>")
 WARMUP = "What is 17 multiplied by 23? Give only the number."
+PINNED = 512  # tokens from which a system block is kept for other conversations
 
 
 def before_call(text):
@@ -118,6 +123,9 @@ class Qwen35Chat:
         self.tokenizer = Tokenizer(str(model))
         config = json.loads((model / "mlc-chat-config.json").read_text())
         self.stops = set(config["conv_template"]["stop_token_ids"])
+        # What a prompt with a system block begins with, and the token that ends the block.
+        self.system = self.template.encode("<|im_start|>system\n", add_special_tokens=False)
+        self.end = self.template.convert_tokens_to_ids("<|im_end|>")
         device = detect_device("cuda")
         target = Program(model, dist / "libs/qwen35-target-sm72.so", device, history=1)
         draft = None
@@ -200,6 +208,13 @@ class Qwen35Chat:
             )
         return prompt, limit, tools
 
+    def block(self, prompt):
+        """Length of the system block `prompt` begins with, when it is worth pinning."""
+        if prompt[: len(self.system)] != self.system or self.end not in prompt:
+            return 0
+        size = prompt.index(self.end) + 1
+        return size if PINNED <= size < len(prompt) else 0
+
     def streamer(self):
         from mlc_llm.tokenizers import TextStreamer
 
@@ -222,7 +237,9 @@ class Qwen35Chat:
             send(before_call(text) if tools else text)
             return True
 
-        result = self.decoder.generate(prompt, limit, self.stops, on_token, cancelled.is_set)
+        result = self.decoder.generate(
+            prompt, limit, self.stops, on_token, cancelled.is_set, self.block(prompt)
+        )
         text += streamer.finish()
         content, calls = parse_output(text, tools) if tools else (text, [])
         send(content)

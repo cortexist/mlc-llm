@@ -12,8 +12,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from gemma4_tools import ToolFormatError
-from qwen35_service import Qwen35Chat, before_call, parse_output
-from qwen35_spec import Decoder
+from qwen35_service import PINNED, Qwen35Chat, before_call, parse_output
+from qwen35_spec import BLOCK, OPEN, PAGE, Decoder
 
 from mlc_llm.protocol.openai_api_protocol import ChatCompletionRequest
 
@@ -39,20 +39,41 @@ class Model:
 
     def __init__(self, rule, history):
         self.rule, self.history, self.device = rule, history, self
-        self.cache = self.state = self.kept = None
+        self.cache = self.state = self.kept = self.block = None
+        self.sequence = OPEN
         self.steps = 0  # single-token steps the state can go back
 
     def sync(self):
         pass
 
+    def pages(self):
+        """Pages of the conversation and, when it is no part of it, of the pinned block."""
+        beside = self.block if self.sequence == OPEN else None
+        return sum(-(-len(tokens) // PAGE) for tokens in (self.cache, beside) if tokens)
+
     def clear(self):
         self.cache = self.state = self.kept = None
 
-    def start(self):
+    def start(self, block=False):
+        assert self.block is None or not block
         self.cache, self.state, self.kept, self.steps = [], [], None, 0
+        self.sequence = BLOCK if block else OPEN
+
+    def pin(self):
+        assert self.sequence == BLOCK and self.cache == self.state
+        self.block = list(self.state)
+
+    def unpin(self):
+        if self.block is not None and self.sequence == BLOCK:
+            self.clear()
+        self.block = None
+
+    def restore(self):
+        self.cache, self.state, self.kept, self.steps = list(self.block), list(self.block), None, 0
+        self.sequence = BLOCK
 
     def mark(self):
-        assert self.cache == self.state
+        assert self.cache == self.state and self.pages() <= self.context // PAGE
         self.kept = list(self.state)
 
     def recall(self):
@@ -73,6 +94,7 @@ class Model:
     def verify(self, tokens):
         assert 1 <= len(tokens) <= 4 and self.cache == self.state
         self.cache = self.cache + tokens
+        assert self.pages() <= self.context // PAGE
         return [self.rule(self.state + tokens[: i + 1]) for i in range(len(tokens))], tokens
 
     def commit(self, held, rows, drop):
@@ -160,6 +182,65 @@ class Decoding(unittest.TestCase):
         result = decoder.generate(other, 8, {STOP})
         self.assertEqual((result["resumed"], result["tokens"]), (None, reference(other, 8)))
 
+    def test_a_pinned_block_begins_other_conversations(self):
+        decoder, target, draft = pair()
+        block = list(range(100, 120))
+
+        def answer(prompt, pinned=len(block)):
+            result = decoder.generate(prompt, 8, {STOP}, block=pinned)
+            self.assertEqual(result["tokens"], reference(prompt, 8))
+            self.assertEqual(target.state, prompt + result["tokens"][:-1])
+            self.assertEqual((draft.state, draft.block), (target.state, target.block))
+            return result["resumed"], result["cached_tokens"], result["tokens"]
+
+        first = [*block, 30, 31, 32, 33]
+        resumed, cached, tokens = answer(first)
+        self.assertEqual((resumed, cached, target.block), (None, 0, block))
+        # Its own conversation goes on as any other does.
+        self.assertEqual(answer([*first, *tokens, 50])[:2], ("live", len(first) + 7))
+        # Another one with the same block reads what follows the block.
+        second = [*block, 40, 41]
+        self.assertEqual(answer(second)[:2], ("pinned", 20))
+        self.assertEqual(answer([*second, 42])[0], "anchor")
+        self.assertEqual(answer([*block, 60])[:2], ("pinned", 20))
+        # A conversation without the block is read beside it and leaves it there.
+        other = [1, 2, 3]
+        resumed, _, tokens = answer(other, 0)
+        self.assertEqual((resumed, target.sequence, target.block), (None, OPEN, block))
+        self.assertEqual(answer([*other, *tokens, 4], 0)[0], "live")
+        self.assertEqual(answer(second)[:2], ("pinned", 20))
+        self.assertEqual(target.sequence, BLOCK)
+        # The block alone has no token after it to answer with.
+        self.assertEqual(answer(block, 0)[0], None)
+        self.assertEqual(target.block, block)
+        # Another block replaces it.
+        new = [*range(200, 216), 5]
+        self.assertEqual((answer(new, 16)[0], target.block), (None, new[:16]))
+        self.assertEqual((answer(second)[0], target.block), (None, block))
+        with self.assertRaises(ValueError):
+            decoder.generate(second, 8, {STOP}, block=len(second))
+
+    def test_the_pinned_block_gives_way_when_the_pages_run_out(self):
+        decoder, target, draft = pair()
+        block = list(range(100, 120))  # two of the four pages
+        decoder.generate([*block, 30], 8, {STOP}, block=20)
+        # 3 + 26 + 3 tokens fit the other two pages; one more does not.
+        other = [1, 2, 3]
+        result = decoder.generate(other, 26, {STOP})
+        self.assertEqual((result["tokens"], target.block), (reference(other, 26), block))
+        grown = [*other, *result["tokens"], 4]
+        result = decoder.generate(grown, 8, {STOP})
+        self.assertEqual((result["resumed"], result["tokens"]), ("live", reference(grown, 8)))
+        self.assertEqual((target.block, draft.block, decoder.pinned), (None, None, None))
+        decoder.generate([*block, 30], 8, {STOP}, block=20)
+        result = decoder.generate(other, 27, {STOP})
+        self.assertEqual((result["tokens"], target.block), (reference(other, 27), None))
+        # A conversation that begins with the block has the whole context.
+        decoder.generate([*block, 30], 8, {STOP}, block=20)
+        long = [*block, *range(40, 70)]
+        result = decoder.generate(long, 11, {STOP})
+        self.assertEqual((result["resumed"], result["tokens"]), ("pinned", reference(long, 11)))
+
     def test_cancelling_and_failing(self):
         decoder, target, _ = pair()
         prompt = list(range(30, 35))
@@ -174,6 +255,11 @@ class Decoding(unittest.TestCase):
             decoder.generate([*prompt, 1], 20, {STOP}, fail)
         self.assertIsNone(target.state)
         self.assertEqual(decoder.generate(prompt, 20, {STOP})["resumed"], None)
+        # Nothing outlives a failure, the pinned block included.
+        decoder.generate([*range(100, 120), 1], 8, {STOP}, block=20)
+        with self.assertRaises(RuntimeError):
+            decoder.generate([*range(100, 120), 2], 8, {STOP}, fail)
+        self.assertEqual((target.state, target.block, decoder.pinned), (None, None, None))
         for prompt, limit in (([], 1), ([1], 0), ([1] * 60, 2)):
             with self.assertRaises(ValueError):
                 decoder.generate(prompt, limit, {STOP})
@@ -261,9 +347,11 @@ class ToolCalls(unittest.TestCase):
 
 
 class Template:
+    prompt = (1, 2, 3)
+
     def apply_chat_template(self, messages, tools=None, **options):
         self.messages, self.tools, self.options = messages, tools, options
-        return [1, 2, 3]
+        return list(self.prompt)
 
 
 class Streamer:
@@ -279,8 +367,8 @@ class Engine:
 
     context = 4096
 
-    def generate(self, prompt, limit, stops, on_token, cancelled):
-        self.prompt, tokens = prompt, []
+    def generate(self, prompt, limit, stops, on_token, cancelled, block):
+        self.prompt, self.block, tokens = prompt, block, []
         for token in range(len(Streamer.text)):
             tokens.append(token)
             if not on_token(token) or cancelled() or len(tokens) == limit:
@@ -296,6 +384,7 @@ class Adapter(unittest.IsolatedAsyncioTestCase):
         self.chat.pool = ThreadPoolExecutor(max_workers=1)
         self.chat.template, self.chat.decoder, self.chat.stops = Template(), Engine(), {STOP}
         self.chat.context_length, self.chat.streamer = 4096, Streamer
+        self.chat.system, self.chat.end = [1, 2], 9
         self.addCleanup(self.chat.pool.shutdown)
 
     async def events(self, payload):
@@ -375,6 +464,23 @@ class Adapter(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<tool_call>", result["choices"][0]["message"]["content"])
         self.assertIsNone(self.chat.template.tools)
 
+    async def test_a_long_system_block_is_offered_for_pinning(self):
+        Streamer.text = ["Yes."]
+        payload = {"model": "qwen", "messages": [{"role": "user", "content": "Hi"}]}
+        body = [5] * (PINNED - 3)
+        for prompt, block in [
+            ([1, 2, *body, 9, 4, 4], PINNED),
+            ([1, 2, *body, 9, 4, 9, 4], PINNED),
+            ([1, 2, *body[1:], 9, 4, 4], 0),  # a short block
+            ([1, 3, *body, 9, 4, 4], 0),  # no system block
+            ([1, 2, *body, 9], 0),  # nothing after it
+            ([1, 2, *body, 4], 0),
+        ]:
+            with self.subTest(prompt=prompt[-4:], size=len(prompt)):
+                self.chat.template.prompt = prompt
+                await self.chat.handle(ChatCompletionRequest(**payload))
+                self.assertEqual(self.chat.decoder.block, block)
+
     async def test_requests_outside_the_service_fail_explicitly(self):
         import fastapi
 
@@ -403,7 +509,7 @@ class Adapter(unittest.IsolatedAsyncioTestCase):
         seen = []
         original = self.chat.decoder.generate
 
-        def slow(prompt, limit, stops, on_token, cancelled):
+        def slow(prompt, limit, stops, on_token, cancelled, block):
             def step(token):
                 seen.append(cancelled())
                 import time
@@ -411,7 +517,7 @@ class Adapter(unittest.IsolatedAsyncioTestCase):
                 time.sleep(0.01)
                 return on_token(token)
 
-            return original(prompt, limit, stops, step, cancelled)
+            return original(prompt, limit, stops, step, cancelled, block)
 
         self.chat.decoder.generate = slow
         task = asyncio.create_task(self.chat.answer([1], 50, []))

@@ -7,13 +7,14 @@
 #
 # TARGET and DRAFT are converted q4f16_1 packages of one Qwen3.5 family (same vocabulary).
 # TEMPLATE is chat_template.jinja of the target's original checkpoint, which MLC conversion
-# does not copy. A token of CONTEXT costs the 27B target 64 KiB of attention cache.
+# does not copy. A token of CONTEXT costs the 27B target 64 KiB of attention cache and the
+# 2B draft 12 KiB.
 set -euo pipefail
 source scripts/xavier/env.sh
 TARGET=${TARGET:-$HOME/Models/qwen3.8-27B-uncensored-q4f16_1-MLC}
 DRAFT=${DRAFT:-$HOME/Models/qwen-3.8-2B-q4f16_1-MLC}
 TEMPLATE=${TEMPLATE:-$HOME/Models/qwen3.8-27B-chat_template.jinja}
-CONTEXT=${CONTEXT:-4096}
+CONTEXT=${CONTEXT:-8192}
 CHUNK=${CHUNK:-512}
 export TVM_NUM_THREADS=2 OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1
 mkdir -p dist/libs dist/qwen35-target dist/qwen35-draft

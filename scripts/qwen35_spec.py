@@ -8,6 +8,11 @@ recurrent state by the kept rows only; the draft goes back through its state his
 One conversation stays in the models between requests. The recurrent state cannot go back,
 so a prompt is continued from one of two points: where the last answer ended, or where the
 last prompt ended (a copy of the recurrent state; the attention cache drops what follows).
+
+A third point outlives the conversation: the end of a pinned block, the leading part of a
+prompt that later conversations begin with too (a system prompt). The block has a sequence
+of its own in the attention cache, where a conversation that begins with it goes on. Any
+other conversation takes the second sequence, and the two share the pages of one context.
 """
 
 import json
@@ -22,7 +27,9 @@ from tvm.contrib import tvmjs
 from tvm.runtime.vm import VirtualMachine
 from tvm_ffi import Shape
 
-LIVE, ANCHOR = 0, 1  # sequences of a recurrent state; the attention cache has LIVE only
+LIVE, ANCHOR, PINNED = 0, 1, 2  # sequences of a recurrent state
+OPEN, BLOCK = 0, 1  # sequences of the attention cache: any conversation, the pinned block
+PAGE = 16  # tokens of an attention cache page
 
 
 def builtin(name):
@@ -43,26 +50,55 @@ class Program:
         self.params = [loaded[p["name"]] for p in metadata["params"]]
         release_file_cache(model)
         self.cache = self.mod["create_tir_paged_kv_cache"](
-            Shape([1]), Shape([self.context]), Shape([self.chunk]), Shape([16]), Shape([0])
+            Shape([2]), Shape([self.context]), Shape([self.chunk]), Shape([PAGE]), Shape([0])
         )
         # Single-token steps are kept in `history` slots, which is what `pop` goes back through.
-        self.state = self.mod["create_rnn_state"](Shape([2]), Shape([history]))
-        self.length = None  # tokens in the attention cache; None without a sequence
+        self.state = self.mod["create_rnn_state"](Shape([3]), Shape([history]))
+        self.sequence = OPEN  # where the conversation is in the attention cache
+        self.length = None  # tokens of the conversation; None without one
         self.anchor = None  # the same when the anchor was taken
+        self.pinned = None  # tokens of the pinned block; None without one
 
     def clear(self):
+        """Drop the conversation; the pinned block stays."""
         if self.length is not None:
-            builtin("kv_state_remove_sequence")(self.cache, LIVE)
+            if self.sequence == OPEN or self.pinned is None:
+                builtin("kv_state_remove_sequence")(self.cache, self.sequence)
+            elif self.length > self.pinned:
+                builtin("kv_state_popn")(self.cache, BLOCK, self.length - self.pinned)
             builtin("kv_state_remove_sequence")(self.state, LIVE)
         if self.anchor is not None:
             builtin("kv_state_remove_sequence")(self.state, ANCHOR)
         self.length = self.anchor = None
 
-    def start(self):
+    def start(self, block=False):
+        """Begin a conversation; with `block`, one whose first part `pin` will keep."""
         self.clear()
-        builtin("kv_state_add_sequence")(self.cache, LIVE)
+        self.sequence = BLOCK if block else OPEN
+        builtin("kv_state_add_sequence")(self.cache, self.sequence)
         builtin("kv_state_add_sequence")(self.state, LIVE)
         self.length = 0
+
+    def pin(self):
+        """Keep what has been read as the pinned block."""
+        builtin("kv_state_fork_sequence")(self.state, LIVE, PINNED, -1)
+        self.pinned = self.length
+
+    def unpin(self):
+        """Drop the pinned block, with a conversation that begins with it."""
+        if self.pinned is not None:
+            if self.sequence == BLOCK:
+                self.clear()
+            builtin("kv_state_remove_sequence")(self.cache, BLOCK)
+            builtin("kv_state_remove_sequence")(self.state, PINNED)
+            self.pinned = None
+
+    def restore(self):
+        """Begin a conversation after the pinned block."""
+        self.clear()
+        self.sequence = BLOCK
+        builtin("kv_state_fork_sequence")(self.state, PINNED, LIVE, -1)
+        self.length = self.pinned
 
     def mark(self):
         """Keep the present recurrent state as the anchor."""
@@ -74,7 +110,7 @@ class Program:
     def recall(self):
         """Go back to the anchor."""
         if self.length > self.anchor:
-            builtin("kv_state_popn")(self.cache, LIVE, self.length - self.anchor)
+            builtin("kv_state_popn")(self.cache, self.sequence, self.length - self.anchor)
         builtin("kv_state_remove_sequence")(self.state, LIVE)
         builtin("kv_state_fork_sequence")(self.state, ANCHOR, LIVE, -1)
         self.length = self.anchor
@@ -83,7 +119,7 @@ class Program:
         ids = tvm_tirx.runtime.tensor(np.array(tokens, "int32"), device=self.device)
         embeds = self.mod["embed"](ids, self.params)
         embeds = builtin("reshape")(embeds, Shape([1, len(tokens), embeds.shape[1]]))
-        builtin("kv_state_begin_forward")(self.cache, Shape([LIVE]), Shape([len(tokens)]))
+        builtin("kv_state_begin_forward")(self.cache, Shape([self.sequence]), Shape([len(tokens)]))
         builtin("kv_state_begin_forward")(
             self.state, Shape([LIVE]), Shape([len(tokens) if advance else 0])
         )
@@ -119,7 +155,7 @@ class Program:
 
     def pop(self, count, state=True):
         if count:
-            builtin("kv_state_popn")(self.cache, LIVE, count)
+            builtin("kv_state_popn")(self.cache, self.sequence, count)
             if state:
                 builtin("kv_state_popn")(self.state, LIVE, count)
             self.length -= count
@@ -135,58 +171,96 @@ class Decoder:
         self.context = target.context
         # (tokens read, token after them) where the last answer and the last prompt ended.
         self.live = self.anchor = None
+        self.pinned = None  # the tokens of the pinned block
 
     def programs(self):
         return [self.target] if self.draft is None else [self.target, self.draft]
 
     def forget(self):
+        """Drop the conversation and the pinned block."""
         self.live = self.anchor = None
         for program in self.programs():
             program.clear()
+        self.unpin()
+
+    def unpin(self):
+        self.pinned = None
+        for program in self.programs():
+            program.unpin()
 
     def resume(self, prompt):
-        """Where `prompt` continues from: None (the start), "live" or "anchor"."""
+        """Where `prompt` continues from: None (the start), "live", "anchor" or "pinned",
+        and (tokens read, token after them) there."""
         for name in ("live", "anchor"):
             held = getattr(self, name)
             if held is not None and prompt[: len(held[0])] == held[0]:
-                return name
-        return None
+                return name, held
+        # The token after the block is not kept: more has to follow it.
+        block = self.pinned
+        if block is not None and len(prompt) > len(block) and prompt[: len(block)] == block:
+            return "pinned", (block, None)
+        return None, ([], None)
 
-    def read(self, program, prompt, origin):
+    def read(self, program, prompt, origin, held, block):
         """Bring `program` to the end of `prompt`; the token after it."""
-        if origin is None:
-            program.start()
-            reused, after = 0, None
-        else:
-            if origin == "anchor":
-                program.recall()
-            reused, after = len(getattr(self, origin)[0]), getattr(self, origin)[1]
+        reused, after = len(held[0]), held[1]
+        if origin == "anchor":
+            program.recall()
+        elif origin == "pinned":
+            program.restore()
+        elif origin is None:
+            program.start(block > 0)
+            if block:
+                program.prefill(prompt[:block])
+                program.pin()
+                reused = block
         if reused < len(prompt):
             after = program.prefill(prompt[reused:])
         program.mark()
         return after
 
-    def generate(self, prompt, limit, stops, on_token=lambda token: True, cancelled=lambda: False):
+    def generate(
+        self,
+        prompt,
+        limit,
+        stops,
+        on_token=lambda token: True,
+        cancelled=lambda: False,
+        block=0,
+    ):
         """At most `limit` tokens after `prompt`, ending with the first token of `stops`.
 
         `on_token` sees every token but a stop token as soon as the target has decided it,
         and returns whether to go on. Rows under verification need `proposals` free places
-        in the context.
+        in the context. When the prompt is read from its start, its first `block` tokens
+        become the pinned block.
         """
         if not prompt or limit < 1 or len(prompt) + limit + self.proposals > self.context:
             raise ValueError("Prompt and answer do not fit the context")
+        if not 0 <= block < len(prompt):
+            raise ValueError("The pinned block is the prompt without its end")
         try:
-            return self.run(list(prompt), limit, stops, on_token, cancelled)
+            return self.run(list(prompt), limit, stops, on_token, cancelled, block)
         except BaseException:
             # The models may be anywhere between two tokens: nothing is kept.
             self.forget()
             raise
 
-    def run(self, prompt, limit, stops, on_token, cancelled):
+    def run(self, prompt, limit, stops, on_token, cancelled, block):
         begin = time.perf_counter()
-        origin = self.resume(prompt)
-        reused = len(getattr(self, origin)[0]) if origin else 0
-        output = [self.read(self.target, prompt, origin)]
+        origin, held = self.resume(prompt)
+        reused = len(held[0])
+        if origin is not None:
+            block = 0
+        if self.pinned is not None and (
+            origin is None or (origin != "pinned" and self.target.sequence == OPEN)
+        ):
+            # This conversation does not begin with the pinned block: it replaces it, or
+            # needs the pages that are left beside it.
+            room = self.context - -(-len(self.pinned) // PAGE) * PAGE
+            if block or len(prompt) + limit + self.proposals > room:
+                self.unpin()
+        output = [self.read(self.target, prompt, origin, held, block)]
         first = time.perf_counter()
 
         def more():
@@ -195,9 +269,11 @@ class Decoder:
 
         go = more()
         if self.draft is not None:
-            self.read(self.draft, prompt, origin)
+            self.read(self.draft, prompt, origin, held, block)
         self.live = None
         self.anchor = (prompt, output[0])
+        if block:
+            self.pinned = prompt[:block]
         rounds = accepted = proposed = 0
         while go and not cancelled():
             # No more proposals than the answer has places left after the next token.

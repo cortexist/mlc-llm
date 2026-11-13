@@ -26,7 +26,7 @@ The existing `nemotron:e4b` client ID is also accepted as a Nemotron alias.
 |---|---|---:|---|---|
 | `nemotron` | DFlash | 16,384 | Yes | Incremental chat; buffered tool turns |
 | `gemma4-12b` | Official QAT MTP, two proposals | 4,096 | Yes | Buffered SSE with keepalives |
-| `qwen3.8-27b` | Qwen3.8 2B draft, three proposals | 4,096 | Yes | Incremental text; a tool call when it is complete |
+| `qwen3.8-27b` | Qwen3.8 2B draft, three proposals | 8,192 | Yes | Incremental text; a tool call when it is complete |
 
 `qwen3.8-27b` is served instead of `gemma4-12b` with the optional
 [`xavier-qwen35.conf`](#qwen35-in-place-of-the-12b).
@@ -151,8 +151,10 @@ target decoded with a small draft of the same family, served by
 `scripts/qwen35_service.py` under the API name `qwen3.8-27b`
 (`MLC_QWEN35_MODEL_ID`). It was built and measured with Qwen3.8 27B and
 Qwen3.8 2B, both `q4f16_1`. The drop-in also unloads the 12B and d1: the pair
-holds 17.1 GiB of GPU memory, and beside Nemotron and EmbeddingGemma 2 a 32 GB
-Xavier is then left with about 1.4 GiB available.
+holds 17.6 GiB of GPU memory with its 8,192-token context (17.1 GiB with 4,096),
+and beside Nemotron and EmbeddingGemma 2 a 32 GB Xavier is then left with about
+1.0 GiB available. Nothing that fills the page cache (a download, a conversion,
+a build) fits beside the running service.
 
 With the two converted packages, the `chat_template.jinja` of the target's
 original checkpoint (MLC conversion omits it) and the service stopped:
@@ -168,10 +170,17 @@ sudo systemctl restart mlc-nemotron
 
 The script links the packages as `dist/qwen35-target` and `dist/qwen35-draft`
 and compiles `dist/libs/qwen35-target-sm72.so` and `dist/libs/qwen35-draft-sm72.so`
-with the Xavier kernels and a 4,096-token context (`CONTEXT`; a token costs the
-27B 64 KiB of attention cache). The pair loads before Nemotron and takes the
-workspace of a full prefill chunk at once. Removing the drop-in and restarting
+with the Xavier kernels and an 8,192-token context (`CONTEXT`; a token costs the
+27B 64 KiB of attention cache and the 2B 12 KiB). The pair loads before Nemotron
+and takes the workspace of a full prefill chunk at once. Removing the drop-in and restarting
 restores the previous workers; no other file of the service changes.
+
+The libraries fit any checkpoint of the same model: convert it with
+`python -m mlc_llm convert_weight <checkpoint> --quantization q4f16_1
+--model-type qwen3_5 --device cpu -o <package>` while the service is stopped
+(the conversion of the 27B needs about 17 GB of memory and 9 minutes on two
+cores), give the package the tokenizer files and an `mlc-chat-config.json`,
+and link it as `dist/qwen35-target`.
 
 The route supports text `/v1/chat/completions`, greedy single-output generation
 without thinking (`enable_thinking=False` in the checkpoint's template), and
@@ -199,9 +208,23 @@ and the remaining context; three context places are kept for verification.
   `usage.prompt_tokens_details.cached_tokens` reports the tokens not read
   again. The second turn of a 1,782-token conversation starts after 1.5 s
   instead of 20.9 s.
+- **Pinned system block.** The system block of a prompt (the system message
+  with the declared tools, up to its `<|im_end|>`) outlives the conversation
+  when it has 512 tokens or more: another conversation that begins with the
+  same block reads only what follows it. The block is a third copy of the
+  recurrent state and a sequence of its own in the attention cache, where its
+  conversations go on. Any other conversation takes a second sequence, and both
+  share the pages of one context: the block is dropped when such a conversation
+  needs its pages, and replaced when a conversation begins with another block
+  of that size. A client changes nothing; `cached_tokens` reports the block.
+  With a 2,540-token block, the first conversation starts after 32 s and
+  another one after 1.6 s. The third copy of the state costs about 220 MiB.
 
-A Pi client registers `xavier/qwen3.8-27b` with the limits of the 12B entry
-below (4,096 context, 512 output tokens, explicit `samplingParams.max_tokens`).
+A Pi client registers `xavier/qwen3.8-27b` like the 12B entry below, with an
+8,192-token context (`contextWindow`) and an explicit
+`samplingParams.max_tokens`: prompt, `max_tokens` and the three verification
+places have to fit the context. Compaction has to begin early enough for a
+tool result to fit too (`reserveTokens` above `max_tokens`).
 
 Generation defaults to `temperature: 0`. Explicit nonzero temperatures or
 `n` values other than 1 return HTTP 400: the experimental Xavier DFlash
